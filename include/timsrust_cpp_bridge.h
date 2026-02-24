@@ -61,8 +61,20 @@ timsffi_status tims_open(const char* path, tims_dataset** out);
 /* Close and free handle */
 void tims_close(tims_dataset* handle);
 
-/* Number of spectra (0 if handle is NULL) */
+/* Number of spectra (0 if handle is NULL).
+ * NOTE: For DIA-PASEF datasets this returns the number of expanded MS2 DIA
+ * spectra (one per quadrupole isolation window × frame), NOT the total number
+ * of raw LC frames. Use tims_num_frames() to obtain the raw frame count which
+ * includes MS1 frames and matches the number of "spectra" reported by mzML
+ * converters.
+ */
 unsigned int tims_num_spectra(const tims_dataset* handle);
+
+/* Total number of raw LC frames (MS1 + MS2) in the acquisition.
+ * For a DIA-PASEF run this is typically: MS1 frames + MS2 PASEF frames.
+ * An mzML conversion of the same run will have roughly this many spectra.
+ */
+unsigned int tims_num_frames(const tims_dataset* handle);
 
 /* Fill out a spectrum structure for the given index. Returns status code.
  * If the function returns TIMSFFI_OK then `out` is populated. If
@@ -98,6 +110,38 @@ void tims_free_spectrum_array(tims_dataset* handle, tims_spectrum* specs, unsign
  * success, or TIMSFFI_ERR_INTERNAL on internal failure.
  */
 timsffi_status tims_get_last_error(tims_dataset* handle, char* buf, unsigned int buf_len);
+
+/* -------------------------------------------------------------------------
+ * File-level aggregate statistics (cf. OpenMS FileInfo output)
+ * ------------------------------------------------------------------------- */
+
+/* Per-MS-level statistics. */
+typedef struct {
+    uint32_t count;          /* number of spectra at this MS level */
+    uint64_t total_peaks;
+    double rt_min, rt_max;   /* retention time range (seconds) */
+    double mz_min, mz_max;   /* m/z range */
+    double im_min, im_max;   /* ion mobility range */
+    double intensity_min, intensity_max;
+} tims_level_stats;
+
+/* Aggregate statistics for the whole file. */
+typedef struct {
+    uint32_t num_frames;      /* total raw LC frames (MS1 + MS2 combined) */
+    uint32_t num_spectra_ms2; /* expanded DIA/DDA MS2 spectra */
+    uint64_t total_peaks;
+    tims_level_stats ms1;
+    tims_level_stats ms2;
+    double wall_ms;           /* wall time to collect stats (ms) */
+} tims_file_info_t;
+
+/* Collect aggregate file statistics in a single parallel pass.
+ * Returns TIMSFFI_OK and fills *out on success.
+ * Note: MS1 stats will only be populated if MS1 spectra are present in the
+ * SpectrumReader view (DIA-PASEF datasets expose MS2 windows only; use
+ * num_frames for the raw LC frame count which includes MS1 frames).
+ */
+timsffi_status tims_file_info(tims_dataset* handle, tims_file_info_t* out);
 
 
 #ifdef __cplusplus
