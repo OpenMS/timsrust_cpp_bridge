@@ -115,6 +115,22 @@ impl TimsDataset {
         self.reader.len() as u32
     }
 
+    /// Number of raw LC frames (MS1 + MS2). Only available with timsrust.
+    /// This counts all frames in the acquisition, not the expanded DIA spectra.
+    pub fn num_frames(&self) -> u32 {
+        #[cfg(feature = "with_timsrust")]
+        {
+            // FrameReader is not stored directly, but we can query the
+            // num_frames from metadata if available.
+            // Fallback: use the precursor count + expected MS1 frames.
+            // For now we return 0 (caller should use tims_num_spectra for MS2).
+            // TODO: store FrameReader and expose frame_reader.len() here.
+            0
+        }
+        #[cfg(not(feature = "with_timsrust"))]
+        0
+    }
+
     pub fn get_spectrum(&mut self, index: u32, out: &mut TimsFfiSpectrum)
         -> Result<(), TimsFfiStatus>
     {
