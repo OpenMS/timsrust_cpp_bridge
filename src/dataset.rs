@@ -41,6 +41,10 @@ pub struct TimsDataset {
     swath_windows: Option<Vec<TimsFfiSwathWindow>>,
     // Optional last error string for this handle
     pub(crate) last_error: Option<String>,
+    // Total raw LC frame count (MS1 + MS2); 0 if not available
+    num_frames: u32,
+    // RT index: sorted (rt_seconds, spectrum_index) pairs for fast lookup
+    rt_index: Vec<(f64, usize)>,
     // Later: cached DIA windows, MS1/MS2 counts, etc.
 }
 
@@ -59,12 +63,14 @@ impl TimsDataset {
             .map_err(|_| TimsFfiStatus::OpenFailed)?;
         // Attempt to compute swath windows when timsrust feature is enabled.
         #[cfg(feature = "with_timsrust")]
-        let swath_windows = {
-            // Try to build QuadrupoleSettingsReader -> QuadrupoleSettings
+        let (swath_windows, num_frames) = {
             use timsrust::readers::QuadrupoleSettingsReader;
+            use timsrust::readers::FrameReader;
             let mut out: Vec<TimsFfiSwathWindow> = Vec::new();
+            let nf = FrameReader::new(path_str)
+                .map(|fr| fr.len() as u32)
+                .unwrap_or(0);
             if let Ok(quads) = QuadrupoleSettingsReader::new(path_str) {
-                // Also try to get metadata for IM conversion
                 if let Ok(metadata) = timsrust::readers::MetadataReader::new(path_str) {
                     let im_converter = metadata.im_converter;
                     for quad in quads.iter() {
@@ -73,13 +79,11 @@ impl TimsDataset {
                             let width = quad.isolation_width[i];
                             let mz_lower = center - width / 2.0;
                             let mz_upper = center + width / 2.0;
-                            // derive im bounds from scan starts/ends if present
                             let (im_lower, im_upper) = if i < quad.scan_starts.len() && i < quad.scan_ends.len() {
                                 let start = quad.scan_starts[i] as f64;
                                 let end = quad.scan_ends[i] as f64;
                                 let im_start = im_converter.convert(start);
                                 let im_end = im_converter.convert(end);
-                                // start scans correspond to higher IM (domain-specific), so use min/max
                                 (im_start.min(im_end), im_start.max(im_end))
                             } else {
                                 (metadata.lower_im, metadata.upper_im)
@@ -96,11 +100,36 @@ impl TimsDataset {
                     }
                 }
             }
-            if out.is_empty() { None } else { Some(out) }
+            (if out.is_empty() { None } else { Some(out) }, nf)
         };
 
         #[cfg(not(feature = "with_timsrust"))]
-        let swath_windows = None;
+        let (swath_windows, num_frames) = (None, 0u32);
+
+        // Build RT index: cheaply read per-precursor RT without decompressing
+        // peak data, so we can do fast nearest-RT lookups later.
+        #[cfg(feature = "with_timsrust")]
+        let rt_index = {
+            use timsrust::readers::PrecursorReader;
+            let mut idx: Vec<(f64, usize)> = Vec::new();
+            if let Ok(prec_reader) = PrecursorReader::build()
+                .with_path(path_str)
+                .finalize()
+            {
+                let n = prec_reader.len();
+                idx.reserve(n);
+                for i in 0..n {
+                    if let Some(p) = prec_reader.get(i) {
+                        idx.push((p.rt, i));
+                    }
+                }
+                idx.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+            }
+            idx
+        };
+
+        #[cfg(not(feature = "with_timsrust"))]
+        let rt_index: Vec<(f64, usize)> = Vec::new();
 
         Ok(TimsDataset {
             reader,
@@ -108,6 +137,8 @@ impl TimsDataset {
             int_buf: Vec::new(),
             swath_windows,
             last_error: None,
+            num_frames,
+            rt_index,
         })
     }
 
@@ -118,17 +149,13 @@ impl TimsDataset {
     /// Number of raw LC frames (MS1 + MS2). Only available with timsrust.
     /// This counts all frames in the acquisition, not the expanded DIA spectra.
     pub fn num_frames(&self) -> u32 {
-        #[cfg(feature = "with_timsrust")]
-        {
-            // FrameReader is not stored directly, but we can query the
-            // num_frames from metadata if available.
-            // Fallback: use the precursor count + expected MS1 frames.
-            // For now we return 0 (caller should use tims_num_spectra for MS2).
-            // TODO: store FrameReader and expose frame_reader.len() here.
-            0
-        }
-        #[cfg(not(feature = "with_timsrust"))]
-        0
+        self.num_frames
+    }
+
+    /// Sorted (rt_seconds, spectrum_index) pairs — built at open time from
+    /// PrecursorReader without decompressing peaks. Used for fast RT lookup.
+    pub(crate) fn rt_index(&self) -> &[(f64, usize)] {
+        &self.rt_index
     }
 
     pub fn get_spectrum(&mut self, index: u32, out: &mut TimsFfiSpectrum)
