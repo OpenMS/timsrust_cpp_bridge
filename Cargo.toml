@@ -1,0 +1,26 @@
+[package]
+name = "timsrust_cpp_bridge"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "C FFI wrapper around timsrust for TDF/miniTDF access"
+
+[lib]
+# We want something C/C++ can link against
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+# timsrust is optional for environments where the native crate is available.
+# Enable by building with `--features with_timsrust`.
+timsrust = { version = "0.4.2", features = ["tdf", "minitdf"], optional = true }
+
+[features]
+# no default features; enable timsrust integration explicitly
+default = []
+with_timsrust = ["timsrust"]
+# possibly others, depending how much timsrust you use
+
+[build-dependencies]
+# only if you want auto header generation
+cbindgen = "0.27"
+
