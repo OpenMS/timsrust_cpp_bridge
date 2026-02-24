@@ -13,6 +13,8 @@ crate-type = ["cdylib", "staticlib"]
 # timsrust is optional for environments where the native crate is available.
 # Enable by building with `--features with_timsrust`.
 timsrust = { version = "0.4.2", features = ["tdf", "minitdf"], optional = true }
+libc = "0.2"
+once_cell = "1.21"
 
 [features]
 # no default features; enable timsrust integration explicitly
