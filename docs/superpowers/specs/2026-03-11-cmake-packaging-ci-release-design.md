@@ -30,13 +30,17 @@ Each archive layout:
 timsrust_cpp_bridge/
 ├── include/
 │   └── timsrust_cpp_bridge.h
-├── lib/
-│   └── libtimsrust_cpp_bridge.a    (.lib on Windows)
-└── cmake/
-    └── timsrust_cpp_bridge/
-        ├── timsrust_cpp_bridgeConfig.cmake
-        └── timsrust_cpp_bridgeConfigVersion.cmake
+└── lib/
+    ├── libtimsrust_cpp_bridge.a    (timsrust_cpp_bridge.lib on Windows — no lib prefix with MSVC)
+    └── cmake/
+        └── timsrust_cpp_bridge/
+            ├── timsrust_cpp_bridgeConfig.cmake
+            └── timsrust_cpp_bridgeConfigVersion.cmake
 ```
+
+The `lib/cmake/<name>/` path follows the conventional CMake installed package layout and is a default search path for `find_package()`.
+
+Only the static library (`.a`/`.lib`) is included. The shared library (`cdylib`) output from Cargo is intentionally excluded since OpenMS will link statically.
 
 ### OpenMS consumption
 
@@ -68,10 +72,12 @@ Single workflow at `.github/workflows/release.yml`.
 ### Job Steps (per matrix entry)
 
 1. Install Rust toolchain (`dtolnay/rust-toolchain`, stable)
-2. `cargo build --features with_timsrust --release`
-3. Smoke test: compile and link `examples/cpp_client.cpp` against the built static library, run with no arguments to verify clean exit
-4. Package: run `scripts/package.sh` to assemble tarball (header + static lib + configured CMake files)
-5. On tag builds: upload artifact via `actions/upload-artifact`
+2. Cache Cargo registry and target directory (`Swatinem/rust-cache`)
+3. `cargo test --features with_timsrust` (validates Rust code compiles and any future tests pass)
+4. `cargo build --features with_timsrust --release`
+5. Smoke test: compile and link `examples/cpp_client.cpp` against the built static library, run with no arguments to verify it does not crash/segfault (non-zero exit code is expected and allowed)
+6. Package: run `scripts/package.sh` to assemble tarball (header + static lib + configured CMake files). Uses `shell: bash` on all platforms (including Windows, where GitHub Actions provides Git Bash)
+7. On tag builds: upload artifact via `actions/upload-artifact`
 
 ### Release Job
 
@@ -82,16 +88,19 @@ Runs after all matrix jobs succeed on a tag push:
 
 ### Versioning
 
-Driven by git tags. The `timsrust_cpp_bridgeConfigVersion.cmake` encodes the version extracted from the tag. Uses `SameMajorVersion` compatibility (0.2.0 satisfies requests for 0.1.0; 1.0.0 does not).
+Driven by git tags. The `timsrust_cpp_bridgeConfigVersion.cmake` encodes the version extracted from the tag. Uses `SameMinorVersion` compatibility (CMake 3.11+), so 0.1.1 satisfies a request for 0.1.0, but 0.2.0 does not. This respects semver conventions during the 0.x phase where minor versions may contain breaking changes.
 
 ## CMake Config Files
 
 ### `timsrust_cpp_bridgeConfig.cmake`
 
-Stored as a template at `cmake/timsrust_cpp_bridgeConfig.cmake.in`, configured at package time with the correct library filename.
+Stored as a template at `cmake/timsrust_cpp_bridgeConfig.cmake.in`, configured at package time with the correct library filename per platform:
+- Linux/macOS: `libtimsrust_cpp_bridge.a`
+- Windows (MSVC): `timsrust_cpp_bridge.lib`
 
 ```cmake
-get_filename_component(_TIMSRUST_PREFIX "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
+# Config file lives at <root>/lib/cmake/timsrust_cpp_bridge/timsrust_cpp_bridgeConfig.cmake
+get_filename_component(_TIMSRUST_PREFIX "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)
 
 if(NOT TARGET timsrust_cpp_bridge::timsrust_cpp_bridge)
   add_library(timsrust_cpp_bridge::timsrust_cpp_bridge STATIC IMPORTED)
@@ -119,20 +128,20 @@ Note: exact system link dependencies (especially macOS frameworks) will be valid
 
 ### `timsrust_cpp_bridgeConfigVersion.cmake`
 
-Stored as a template at `cmake/timsrust_cpp_bridgeConfigVersion.cmake.in`, version injected from the git tag at package time. Standard CMake version compatibility file using `SameMajorVersion`.
+Stored as a template at `cmake/timsrust_cpp_bridgeConfigVersion.cmake.in`, version injected from the git tag at package time. Generated using `write_basic_package_version_file()` from CMakePackageConfigHelpers with `SameMinorVersion` compatibility. Alternatively, the packaging script can write this file directly using the standard CMake version-file boilerplate.
 
 ## Smoke Test
 
 Validates the build artifact is usable without requiring real `.d` datasets:
 
 1. Compile `examples/cpp_client.cpp` against the static library and header
-2. Run the binary with no arguments — verifies clean exit (not crash/segfault)
+2. Run the binary with no arguments — verifies it does not crash or segfault. The binary already prints usage and returns exit code 1 when called with no arguments, which is correct CLI behavior. The CI step allows non-zero exit codes (e.g. `./cpp_client || true`) and only fails on signals (segfault, abort).
 
 **Catches:** missing system link deps, ABI mismatches, platform-specific linking issues.
 
 **Does not catch:** data reading correctness (requires real `.d` files, remains manual).
 
-**Required change:** `examples/cpp_client.cpp` needs a clean early exit when invoked with no arguments (currently expects a dataset path).
+No changes needed to `examples/cpp_client.cpp` — the existing early-exit-with-usage behavior is suitable for the smoke test.
 
 ## Repository Structure Changes
 
@@ -147,12 +156,6 @@ cmake/
   timsrust_cpp_bridgeConfigVersion.cmake.in  # Version config template
 scripts/
   package.sh                             # Assembles release tarball
-```
-
-Modified files:
-
-```
-examples/cpp_client.cpp                  # Clean exit when no arguments
 ```
 
 **Not added:**
