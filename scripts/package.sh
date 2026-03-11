@@ -13,6 +13,12 @@ set -euo pipefail
 VERSION="${1:?Usage: package.sh <version> <target-triple>}"
 TARGET="${2:?Usage: package.sh <version> <target-triple>}"
 
+# Validate version format (semver or 0.0.0-dev for CI)
+if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?$ ]]; then
+  echo "Error: VERSION must be semver (e.g. 1.2.3), got: $VERSION" >&2
+  exit 1
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -72,6 +78,7 @@ sed -e "s|@TIMSRUST_VERSION_MAJOR@|${V_MAJOR}|g" \
 # Create archive
 cd "$PROJECT_ROOT/target/package/${ARCHIVE_NAME}"
 if [[ "$PLATFORM" == windows-* ]]; then
+  rm -f "$PROJECT_ROOT/target/package/${ARCHIVE_NAME}.zip"
   7z a -tzip "$PROJECT_ROOT/target/package/${ARCHIVE_NAME}.zip" timsrust_cpp_bridge/
   echo "Created: target/package/${ARCHIVE_NAME}.zip"
 else

@@ -36,13 +36,18 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v4
+      # actions/checkout v4.3.1
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        # dtolnay/rust-toolchain stable branch
+        uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
+        with:
+          toolchain: stable
 
       - name: Cache Cargo
-        uses: Swatinem/rust-cache@v2
+        # Swatinem/rust-cache v2.8.2
+        uses: Swatinem/rust-cache@401aff9a7a08acb9d27b64936a90db81024cff97
 
       - name: Run tests
         run: cargo test --features with_timsrust
@@ -56,7 +61,7 @@ jobs:
         run: |
           g++ -std=c++17 examples/cpp_client.cpp \
             -Iinclude \
-            -Ltarget/release -ltimsrust_cpp_bridge \
+            target/release/libtimsrust_cpp_bridge.a \
             -lpthread -ldl -lm \
             -o target/smoke_test
           # Run with no args — expect exit code 1 (usage), fail only on signal/crash
@@ -68,7 +73,7 @@ jobs:
         run: |
           clang++ -std=c++17 examples/cpp_client.cpp \
             -Iinclude \
-            -Ltarget/release -ltimsrust_cpp_bridge \
+            target/release/libtimsrust_cpp_bridge.a \
             -framework Security -framework SystemConfiguration \
             -lresolv -lpthread \
             -o target/smoke_test
@@ -77,7 +82,8 @@ jobs:
 
       - name: Setup MSVC dev environment
         if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1
+        # ilammy/msvc-dev-cmd v1.13.0
+        uses: ilammy/msvc-dev-cmd@a102174a2b586eec2ea151a69e6fd14404a8ce7c
 
       - name: Smoke test (Windows)
         if: runner.os == 'Windows'
@@ -86,20 +92,46 @@ jobs:
           cl.exe /std:c++17 /EHsc /Fe:target\smoke_test.exe /I include examples\cpp_client.cpp target\release\timsrust_cpp_bridge.lib ws2_32.lib userenv.lib bcrypt.lib ntdll.lib advapi32.lib
           target\smoke_test.exe || ver>nul
 
-      - name: Extract version from tag
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Set version
         id: version
         shell: bash
-        run: echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.0.0-dev" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Package
-        if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
         run: bash scripts/package.sh "${{ steps.version.outputs.version }}" "${{ matrix.target }}"
 
+      - name: Validate CMake package
+        shell: bash
+        run: |
+          ARCHIVE_DIR="target/package/timsrust_cpp_bridge-v${{ steps.version.outputs.version }}-${{ matrix.platform }}/timsrust_cpp_bridge"
+          mkdir -p /tmp/timsrust_cmake_test
+          cat > /tmp/timsrust_cmake_test/CMakeLists.txt << 'CMAKEOF'
+          cmake_minimum_required(VERSION 3.11)
+          project(test_consumer CXX)
+          set(CMAKE_CXX_STANDARD 17)
+          find_package(timsrust_cpp_bridge REQUIRED)
+          add_executable(test_consumer test.cpp)
+          target_link_libraries(test_consumer timsrust_cpp_bridge::timsrust_cpp_bridge)
+          CMAKEOF
+          cat > /tmp/timsrust_cmake_test/test.cpp << 'CPPEOF'
+          #include "timsrust_cpp_bridge.h"
+          int main() { return 0; }
+          CPPEOF
+          cmake -S /tmp/timsrust_cmake_test -B /tmp/timsrust_cmake_test/build \
+            -DCMAKE_PREFIX_PATH="$(pwd)/${ARCHIVE_DIR}"
+          cmake --build /tmp/timsrust_cmake_test/build
+          rm -rf /tmp/timsrust_cmake_test
+
       - name: Upload artifact
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: actions/upload-artifact@v4
+        # actions/upload-artifact v4.6.2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: timsrust_cpp_bridge-v${{ steps.version.outputs.version }}-${{ matrix.platform }}
           path: target/package/timsrust_cpp_bridge-v${{ steps.version.outputs.version }}-${{ matrix.platform }}.${{ matrix.archive_ext }}
@@ -113,12 +145,14 @@ jobs:
 
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        # actions/download-artifact v4.3.0
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           path: artifacts/
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        # softprops/action-gh-release v2.5.0
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b
         with:
           files: artifacts/**/*
           generate_release_notes: true
