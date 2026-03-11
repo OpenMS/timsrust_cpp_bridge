@@ -119,7 +119,7 @@ if(NOT TARGET timsrust_cpp_bridge::timsrust_cpp_bridge)
       INTERFACE "-framework Security" "-framework SystemConfiguration" resolv)
   elseif(WIN32)
     target_link_libraries(timsrust_cpp_bridge::timsrust_cpp_bridge
-      INTERFACE ws2_32 userenv bcrypt ntdll)
+      INTERFACE ws2_32 userenv bcrypt ntdll advapi32)
   endif()
 endif()
 ```
