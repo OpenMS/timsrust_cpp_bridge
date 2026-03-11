@@ -35,6 +35,12 @@ jobs:
 
     runs-on: ${{ matrix.os }}
 
+    # Must match OpenMS's MACOSX_DEPLOYMENT_TARGET (see pyOpenMS pyproject.toml
+    # and openms_ci_matrix_full.yml) to avoid deployment target mismatch warnings
+    # when linking the static library into OpenMS/pyOpenMS.
+    env:
+      MACOSX_DEPLOYMENT_TARGET: ${{ startsWith(matrix.os, 'macos') && '14.0' || '' }}
+
     steps:
       # actions/checkout v6.0.2
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
