@@ -1,7 +1,6 @@
 // src/lib.rs
 mod dataset;
 mod types;
-mod errors; // optional for error mapping
 
 use crate::dataset::TimsDataset;
 use crate::types::{TimsFfiSpectrum, TimsFfiStatus, TimsFfiFileInfo, TimsFfiLevelStats};
