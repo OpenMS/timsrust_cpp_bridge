@@ -3,7 +3,7 @@ mod dataset;
 mod types;
 
 use crate::dataset::TimsDataset;
-use crate::types::{TimsFfiSpectrum, TimsFfiStatus, TimsFfiFileInfo, TimsFfiLevelStats};
+use crate::types::{TimsFfiSpectrum, TimsFfiFrame, TimsFfiStatus, TimsFfiFileInfo, TimsFfiLevelStats};
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_uint};
 use std::os::raw::{c_int, c_double};
@@ -420,4 +420,179 @@ pub extern "C" fn tims_file_info(
 
     unsafe { *out = info; }
     TimsFfiStatus::Ok
+}
+
+#[no_mangle]
+pub extern "C" fn tims_get_frame(
+    handle: *mut tims_dataset,
+    index: c_uint,
+    out_frame: *mut TimsFfiFrame,
+) -> TimsFfiStatus {
+    if handle.is_null() || out_frame.is_null() {
+        return TimsFfiStatus::Internal;
+    }
+    let ds = unsafe { &mut (*handle).inner };
+    let out = unsafe { &mut *out_frame };
+    match ds.get_frame(index, out) {
+        Ok(()) => TimsFfiStatus::Ok,
+        Err(e) => e,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tims_get_frames_by_level(
+    handle: *mut tims_dataset,
+    ms_level: c_uint,
+    out_count: *mut c_uint,
+    out_frames: *mut *mut TimsFfiFrame,
+) -> TimsFfiStatus {
+    if handle.is_null() || out_count.is_null() || out_frames.is_null() {
+        return TimsFfiStatus::Internal;
+    }
+    let ds = unsafe { &mut (*handle).inner };
+
+    #[cfg(feature = "with_timsrust")]
+    {
+        let frames_result = match ms_level {
+            1 => ds.frame_reader.get_all_ms1(),
+            2 => ds.frame_reader.get_all_ms2(),
+            _ => {
+                // Invalid ms_level: return empty Ok
+                unsafe { *out_count = 0; *out_frames = std::ptr::null_mut(); }
+                return TimsFfiStatus::Ok;
+            }
+        };
+
+        let frames: Vec<_> = match frames_result.into_iter().collect::<Result<Vec<_>, _>>() {
+            Ok(v) => v,
+            Err(_) => {
+                ds.last_error = Some("failed to read one or more frames".to_string());
+                unsafe { *out_count = 0; *out_frames = std::ptr::null_mut(); }
+                return TimsFfiStatus::Internal;
+            }
+        };
+
+        let n = frames.len();
+        if n == 0 {
+            unsafe { *out_count = 0; *out_frames = std::ptr::null_mut(); }
+            return TimsFfiStatus::Ok;
+        }
+
+        // Allocate the outer array of TimsFfiFrame via malloc
+        let arr_ptr = unsafe { malloc(n * mem::size_of::<TimsFfiFrame>()) } as *mut TimsFfiFrame;
+        if arr_ptr.is_null() { return TimsFfiStatus::Internal; }
+
+        for (idx, frame) in frames.iter().enumerate() {
+            let num_peaks = frame.tof_indices.len();
+            let num_scans = if frame.scan_offsets.is_empty() { 0 } else { frame.scan_offsets.len() - 1 };
+
+            // Allocate per-frame tof_indices
+            let tof_ptr = if num_peaks == 0 { std::ptr::null_mut() } else {
+                let p = unsafe { malloc(num_peaks * mem::size_of::<u32>()) } as *mut u32;
+                if p.is_null() {
+                    // Free previously allocated frames
+                    for j in 0..idx {
+                        unsafe {
+                            let old = arr_ptr.add(j).read();
+                            if !old.tof_indices.is_null() { free(old.tof_indices as *mut libc::c_void); }
+                            if !old.intensities.is_null() { free(old.intensities as *mut libc::c_void); }
+                            if !old.scan_offsets.is_null() { free(old.scan_offsets as *mut libc::c_void); }
+                        }
+                    }
+                    unsafe { free(arr_ptr as *mut libc::c_void); }
+                    return TimsFfiStatus::Internal;
+                }
+                for i in 0..num_peaks { unsafe { *p.add(i) = frame.tof_indices[i]; } }
+                p
+            };
+
+            // Allocate per-frame intensities
+            let int_ptr = if num_peaks == 0 { std::ptr::null_mut() } else {
+                let p = unsafe { malloc(num_peaks * mem::size_of::<u32>()) } as *mut u32;
+                if p.is_null() {
+                    if !tof_ptr.is_null() { unsafe { free(tof_ptr as *mut libc::c_void); } }
+                    for j in 0..idx {
+                        unsafe {
+                            let old = arr_ptr.add(j).read();
+                            if !old.tof_indices.is_null() { free(old.tof_indices as *mut libc::c_void); }
+                            if !old.intensities.is_null() { free(old.intensities as *mut libc::c_void); }
+                            if !old.scan_offsets.is_null() { free(old.scan_offsets as *mut libc::c_void); }
+                        }
+                    }
+                    unsafe { free(arr_ptr as *mut libc::c_void); }
+                    return TimsFfiStatus::Internal;
+                }
+                for i in 0..num_peaks { unsafe { *p.add(i) = frame.intensities[i]; } }
+                p
+            };
+
+            // Allocate per-frame scan_offsets (length: num_scans + 1)
+            let scan_ptr = if num_scans == 0 { std::ptr::null_mut() } else {
+                let scan_len = num_scans + 1;
+                let p = unsafe { malloc(scan_len * mem::size_of::<u64>()) } as *mut u64;
+                if p.is_null() {
+                    if !tof_ptr.is_null() { unsafe { free(tof_ptr as *mut libc::c_void); } }
+                    if !int_ptr.is_null() { unsafe { free(int_ptr as *mut libc::c_void); } }
+                    for j in 0..idx {
+                        unsafe {
+                            let old = arr_ptr.add(j).read();
+                            if !old.tof_indices.is_null() { free(old.tof_indices as *mut libc::c_void); }
+                            if !old.intensities.is_null() { free(old.intensities as *mut libc::c_void); }
+                            if !old.scan_offsets.is_null() { free(old.scan_offsets as *mut libc::c_void); }
+                        }
+                    }
+                    unsafe { free(arr_ptr as *mut libc::c_void); }
+                    return TimsFfiStatus::Internal;
+                }
+                for i in 0..scan_len { unsafe { *p.add(i) = frame.scan_offsets[i] as u64; } }
+                p
+            };
+
+            let ms_lvl: u8 = match frame.ms_level {
+                timsrust::MSLevel::MS1 => 1,
+                timsrust::MSLevel::MS2 => 2,
+                _ => 0,
+            };
+
+            let out_frame = TimsFfiFrame {
+                index: frame.index as u32,
+                rt_seconds: frame.rt_in_seconds,
+                ms_level: ms_lvl,
+                num_scans: num_scans as u32,
+                num_peaks: num_peaks as u32,
+                tof_indices: if tof_ptr.is_null() { std::ptr::null() } else { tof_ptr as *const u32 },
+                intensities: if int_ptr.is_null() { std::ptr::null() } else { int_ptr as *const u32 },
+                scan_offsets: if scan_ptr.is_null() { std::ptr::null() } else { scan_ptr as *const u64 },
+            };
+            unsafe { arr_ptr.add(idx).write(out_frame); }
+        }
+
+        unsafe { *out_count = n as c_uint; *out_frames = arr_ptr; }
+        TimsFfiStatus::Ok
+    }
+
+    #[cfg(not(feature = "with_timsrust"))]
+    {
+        unsafe { *out_count = 0; *out_frames = std::ptr::null_mut(); }
+        TimsFfiStatus::Ok
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tims_free_frame_array(
+    _handle: *mut tims_dataset,
+    frames: *mut TimsFfiFrame,
+    count: c_uint,
+) {
+    if frames.is_null() { return; }
+    let n = count as usize;
+    for i in 0..n {
+        unsafe {
+            let fr = frames.add(i).read();
+            if !fr.tof_indices.is_null() { free(fr.tof_indices as *mut libc::c_void); }
+            if !fr.intensities.is_null() { free(fr.intensities as *mut libc::c_void); }
+            if !fr.scan_offsets.is_null() { free(fr.scan_offsets as *mut libc::c_void); }
+        }
+    }
+    unsafe { free(frames as *mut libc::c_void); }
 }
