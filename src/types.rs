@@ -100,3 +100,16 @@ pub struct TimsFfiFileInfo {
     pub wall_ms: c_double,       // wall time to collect stats (ms)
 }
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct TimsFfiFrame {
+    pub index: c_uint,
+    pub rt_seconds: c_double,
+    pub ms_level: c_uchar,        // 1=MS1, 2=MS2, 0=Unknown
+    pub num_scans: c_uint,
+    pub num_peaks: c_uint,         // total peaks (length of tof_indices & intensities)
+    pub tof_indices: *const u32,   // raw TOF indices, flat array
+    pub intensities: *const u32,   // raw intensities, flat array
+    pub scan_offsets: *const u64,  // per-scan offsets (length: num_scans + 1)
+}
+

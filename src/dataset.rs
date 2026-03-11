@@ -1,5 +1,5 @@
 // src/dataset.rs
-use crate::types::{TimsFfiSpectrum, TimsFfiSwathWindow, TimsFfiStatus};
+use crate::types::{TimsFfiSpectrum, TimsFfiSwathWindow, TimsFfiFrame, TimsFfiStatus};
 use std::ffi::CStr;
 use std::ptr;
 
@@ -14,6 +14,10 @@ use timsrust::readers::SpectrumReader;
 use timsrust::readers::MetadataReader;
 #[cfg(feature = "with_timsrust")]
 use timsrust::converters::ConvertableDomain;
+#[cfg(feature = "with_timsrust")]
+use timsrust::readers::FrameReader;
+#[cfg(feature = "with_timsrust")]
+use timsrust::converters::{Tof2MzConverter, Scan2ImConverter};
 
 #[cfg(not(feature = "with_timsrust"))]
 struct SpectrumReader {
@@ -32,20 +36,37 @@ impl SpectrumReader {
     }
 }
 
+#[cfg(not(feature = "with_timsrust"))]
+struct FrameReader { n: usize }
+
+#[cfg(not(feature = "with_timsrust"))]
+impl FrameReader {
+    fn new(_path: &str) -> Result<Self, ()> { Ok(FrameReader { n: 0 }) }
+    fn len(&self) -> usize { self.n }
+}
+
+#[cfg(not(feature = "with_timsrust"))]
+struct Tof2MzConverter;
+#[cfg(not(feature = "with_timsrust"))]
+struct Scan2ImConverter;
+#[cfg(not(feature = "with_timsrust"))]
+impl Tof2MzConverter { fn convert(&self, value: f64) -> f64 { value } }
+#[cfg(not(feature = "with_timsrust"))]
+impl Scan2ImConverter { fn convert(&self, value: f64) -> f64 { value } }
+
 pub struct TimsDataset {
     pub(crate) reader: SpectrumReader,
-    // Reusable buffers for mz/intensity to keep ownership in Rust
     mz_buf: Vec<f32>,
     int_buf: Vec<f32>,
-    // Optional cached swath windows computed at open time when available
+    frame_tof_buf: Vec<u32>,
+    frame_int_buf: Vec<u32>,
+    frame_scan_offset_buf: Vec<u64>,
+    pub(crate) frame_reader: FrameReader,
+    pub(crate) mz_converter: Tof2MzConverter,
+    pub(crate) im_converter: Scan2ImConverter,
     swath_windows: Option<Vec<TimsFfiSwathWindow>>,
-    // Optional last error string for this handle
     pub(crate) last_error: Option<String>,
-    // Total raw LC frame count (MS1 + MS2); 0 if not available
-    num_frames: u32,
-    // RT index: sorted (rt_seconds, spectrum_index) pairs for fast lookup
     rt_index: Vec<(f64, usize)>,
-    // Later: cached DIA windows, MS1/MS2 counts, etc.
 }
 
 impl TimsDataset {
@@ -61,50 +82,53 @@ impl TimsDataset {
         #[cfg(not(feature = "with_timsrust"))]
         let reader = SpectrumReader::new(path)
             .map_err(|_| TimsFfiStatus::OpenFailed)?;
-        // Attempt to compute swath windows when timsrust feature is enabled.
+        // Attempt to compute swath windows, frame reader, and converters when
+        // timsrust feature is enabled.
         #[cfg(feature = "with_timsrust")]
-        let (swath_windows, num_frames) = {
+        let (swath_windows, frame_reader, mz_converter, im_converter) = {
             use timsrust::readers::QuadrupoleSettingsReader;
-            use timsrust::readers::FrameReader;
             let mut out: Vec<TimsFfiSwathWindow> = Vec::new();
-            let nf = FrameReader::new(path_str)
-                .map(|fr| fr.len() as u32)
-                .unwrap_or(0);
+            let fr = FrameReader::new(path_str)
+                .map_err(|_| TimsFfiStatus::OpenFailed)?;
+            let metadata = MetadataReader::new(path_str)
+                .map_err(|_| TimsFfiStatus::OpenFailed)?;
+            let mz_conv = metadata.mz_converter;
+            let im_conv = metadata.im_converter;
             if let Ok(quads) = QuadrupoleSettingsReader::new(path_str) {
-                if let Ok(metadata) = timsrust::readers::MetadataReader::new(path_str) {
-                    let im_converter = metadata.im_converter;
-                    for quad in quads.iter() {
-                        for i in 0..quad.len() {
-                            let center = quad.isolation_mz[i];
-                            let width = quad.isolation_width[i];
-                            let mz_lower = center - width / 2.0;
-                            let mz_upper = center + width / 2.0;
-                            let (im_lower, im_upper) = if i < quad.scan_starts.len() && i < quad.scan_ends.len() {
-                                let start = quad.scan_starts[i] as f64;
-                                let end = quad.scan_ends[i] as f64;
-                                let im_start = im_converter.convert(start);
-                                let im_end = im_converter.convert(end);
-                                (im_start.min(im_end), im_start.max(im_end))
-                            } else {
-                                (metadata.lower_im, metadata.upper_im)
-                            };
-                            out.push(TimsFfiSwathWindow {
-                                mz_lower,
-                                mz_upper,
-                                mz_center: center,
-                                im_lower,
-                                im_upper,
-                                is_ms1: 0,
-                            });
-                        }
+                for quad in quads.iter() {
+                    for i in 0..quad.len() {
+                        let center = quad.isolation_mz[i];
+                        let width = quad.isolation_width[i];
+                        let mz_lower = center - width / 2.0;
+                        let mz_upper = center + width / 2.0;
+                        let (im_lower, im_upper) = if i < quad.scan_starts.len() && i < quad.scan_ends.len() {
+                            let start = quad.scan_starts[i] as f64;
+                            let end = quad.scan_ends[i] as f64;
+                            let im_start = im_conv.convert(start);
+                            let im_end = im_conv.convert(end);
+                            (im_start.min(im_end), im_start.max(im_end))
+                        } else {
+                            (metadata.lower_im, metadata.upper_im)
+                        };
+                        out.push(TimsFfiSwathWindow {
+                            mz_lower,
+                            mz_upper,
+                            mz_center: center,
+                            im_lower,
+                            im_upper,
+                            is_ms1: 0,
+                        });
                     }
                 }
             }
-            (if out.is_empty() { None } else { Some(out) }, nf)
+            (if out.is_empty() { None } else { Some(out) }, fr, mz_conv, im_conv)
         };
 
         #[cfg(not(feature = "with_timsrust"))]
-        let (swath_windows, num_frames) = (None, 0u32);
+        let (swath_windows, frame_reader, mz_converter, im_converter) = {
+            let fr = FrameReader::new(path_str).map_err(|_| TimsFfiStatus::OpenFailed)?;
+            (None, fr, Tof2MzConverter, Scan2ImConverter)
+        };
 
         // Build RT index: cheaply read per-precursor RT without decompressing
         // peak data, so we can do fast nearest-RT lookups later.
@@ -135,9 +159,14 @@ impl TimsDataset {
             reader,
             mz_buf: Vec::new(),
             int_buf: Vec::new(),
+            frame_tof_buf: Vec::new(),
+            frame_int_buf: Vec::new(),
+            frame_scan_offset_buf: Vec::new(),
+            frame_reader,
+            mz_converter,
+            im_converter,
             swath_windows,
             last_error: None,
-            num_frames,
             rt_index,
         })
     }
@@ -149,7 +178,7 @@ impl TimsDataset {
     /// Number of raw LC frames (MS1 + MS2). Only available with timsrust.
     /// This counts all frames in the acquisition, not the expanded DIA spectra.
     pub fn num_frames(&self) -> u32 {
-        self.num_frames
+        self.frame_reader.len() as u32
     }
 
     /// Sorted (rt_seconds, spectrum_index) pairs — built at open time from
@@ -257,6 +286,41 @@ impl TimsDataset {
 
         // No metadata available: return empty vector.
         Ok(vec![])
+    }
+
+    pub fn get_frame(&mut self, index: u32, out: &mut TimsFfiFrame) -> Result<(), TimsFfiStatus> {
+        let len = self.frame_reader.len() as u32;
+        if index >= len { return Err(TimsFfiStatus::IndexOutOfBounds); }
+
+        #[cfg(feature = "with_timsrust")]
+        {
+            let frame = self.frame_reader.get(index as usize)
+                .map_err(|_| TimsFfiStatus::IndexOutOfBounds)?;
+            self.frame_tof_buf.clear();
+            self.frame_tof_buf.extend_from_slice(&frame.tof_indices);
+            self.frame_int_buf.clear();
+            self.frame_int_buf.extend_from_slice(&frame.intensities);
+            self.frame_scan_offset_buf.clear();
+            self.frame_scan_offset_buf.extend(frame.scan_offsets.iter().map(|&s| s as u64));
+            let num_scans = if frame.scan_offsets.is_empty() { 0 } else { (frame.scan_offsets.len() - 1) as u32 };
+            out.index = frame.index as u32;
+            out.rt_seconds = frame.rt_in_seconds;
+            out.ms_level = match frame.ms_level { timsrust::MSLevel::MS1 => 1, timsrust::MSLevel::MS2 => 2, _ => 0 };
+            out.num_scans = num_scans;
+            out.num_peaks = frame.tof_indices.len() as u32;
+            out.tof_indices = if out.num_peaks == 0 { ptr::null() } else { self.frame_tof_buf.as_ptr() };
+            out.intensities = if out.num_peaks == 0 { ptr::null() } else { self.frame_int_buf.as_ptr() };
+            out.scan_offsets = if num_scans == 0 { ptr::null() } else { self.frame_scan_offset_buf.as_ptr() };
+            return Ok(());
+        }
+
+        #[cfg(not(feature = "with_timsrust"))]
+        {
+            out.index = index; out.rt_seconds = 0.0; out.ms_level = 0;
+            out.num_scans = 0; out.num_peaks = 0;
+            out.tof_indices = ptr::null(); out.intensities = ptr::null(); out.scan_offsets = ptr::null();
+            Ok(())
+        }
     }
 }
 
