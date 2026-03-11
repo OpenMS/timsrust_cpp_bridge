@@ -1,4 +1,4 @@
-/* include/timsffi.h */
+/* include/timsrust_cpp_bridge.h */
 
 #ifndef TIMSFFI_H
 #define TIMSFFI_H
@@ -167,7 +167,8 @@ timsffi_status tims_file_info(tims_dataset* handle, tims_file_info_t* out);
 
 /* Fill out a frame structure for the given index. Returns status code.
  * Pointers in the output point to internal buffers owned by the handle;
- * valid until the next operation on the same handle or tims_close().
+ * valid until the next call to tims_get_frame on the same handle or
+ * tims_close(). Frame and spectrum buffers are independent.
  */
 timsffi_status tims_get_frame(tims_dataset* handle, unsigned int index, tims_frame* out_frame);
 
