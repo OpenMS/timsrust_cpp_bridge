@@ -16,6 +16,9 @@ use once_cell::sync::Lazy;
 use std::sync::Mutex;
 use crate::types::TIMSFFI_MAX_ERROR_LEN;
 
+#[cfg(feature = "with_timsrust")]
+use timsrust::converters::ConvertableDomain;
+
 static LAST_ERROR: Lazy<Mutex<Option<String>>> = Lazy::new(|| Mutex::new(None));
 
 #[repr(C)]
@@ -595,4 +598,66 @@ pub extern "C" fn tims_free_frame_array(
         }
     }
     unsafe { free(frames as *mut libc::c_void); }
+}
+
+// -------------------------------------------------------------------------
+// Index converters (TOF -> m/z, scan -> ion mobility)
+// -------------------------------------------------------------------------
+
+#[no_mangle]
+pub extern "C" fn tims_convert_tof_to_mz(
+    handle: *const tims_dataset,
+    tof_index: c_uint,
+) -> c_double {
+    if handle.is_null() { return f64::NAN; }
+    let ds = unsafe { &(*handle).inner };
+    ds.mz_converter.convert(tof_index as f64)
+}
+
+#[no_mangle]
+pub extern "C" fn tims_convert_scan_to_im(
+    handle: *const tims_dataset,
+    scan_index: c_uint,
+) -> c_double {
+    if handle.is_null() { return f64::NAN; }
+    let ds = unsafe { &(*handle).inner };
+    ds.im_converter.convert(scan_index as f64)
+}
+
+#[no_mangle]
+pub extern "C" fn tims_convert_tof_to_mz_array(
+    handle: *const tims_dataset,
+    tof_indices: *const u32,
+    count: c_uint,
+    out_mz: *mut c_double,
+) -> TimsFfiStatus {
+    if handle.is_null() || tof_indices.is_null() || out_mz.is_null() {
+        return TimsFfiStatus::Internal;
+    }
+    let ds = unsafe { &(*handle).inner };
+    let n = count as usize;
+    for i in 0..n {
+        let idx = unsafe { *tof_indices.add(i) };
+        unsafe { *out_mz.add(i) = ds.mz_converter.convert(idx as f64); }
+    }
+    TimsFfiStatus::Ok
+}
+
+#[no_mangle]
+pub extern "C" fn tims_convert_scan_to_im_array(
+    handle: *const tims_dataset,
+    scan_indices: *const u32,
+    count: c_uint,
+    out_im: *mut c_double,
+) -> TimsFfiStatus {
+    if handle.is_null() || scan_indices.is_null() || out_im.is_null() {
+        return TimsFfiStatus::Internal;
+    }
+    let ds = unsafe { &(*handle).inner };
+    let n = count as usize;
+    for i in 0..n {
+        let idx = unsafe { *scan_indices.add(i) };
+        unsafe { *out_im.add(i) = ds.im_converter.convert(idx as f64); }
+    }
+    TimsFfiStatus::Ok
 }
