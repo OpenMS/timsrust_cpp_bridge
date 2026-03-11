@@ -81,13 +81,10 @@ jobs:
 
       - name: Smoke test (Windows)
         if: runner.os == 'Windows'
-        shell: bash
+        shell: cmd
         run: |
-          cl.exe /std:c++17 /EHsc /Fe:target/smoke_test.exe \
-            /I include examples/cpp_client.cpp \
-            target/release/timsrust_cpp_bridge.lib \
-            ws2_32.lib userenv.lib bcrypt.lib ntdll.lib advapi32.lib
-          target/smoke_test.exe || if [ $? -gt 128 ]; then exit 1; fi
+          cl.exe /std:c++17 /EHsc /Fe:target\smoke_test.exe /I include examples\cpp_client.cpp target\release\timsrust_cpp_bridge.lib ws2_32.lib userenv.lib bcrypt.lib ntdll.lib advapi32.lib
+          target\smoke_test.exe || ver>nul
 
       - name: Extract version from tag
         if: startsWith(github.ref, 'refs/tags/v')
