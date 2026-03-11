@@ -11,6 +11,13 @@ pub struct TimsFfiSpectrum {
     pub mz: *const c_float,
     pub intensity: *const c_float,
     pub im: c_double,
+    // New fields for Sage parity
+    pub index: c_uint,               // Spectrum.index from SpectrumReader
+    pub isolation_width: c_double,   // isolation window width (0.0 if N/A)
+    pub isolation_mz: c_double,      // isolation window center m/z (0.0 if N/A)
+    pub charge: c_uchar,             // precursor charge (0 = unknown)
+    pub precursor_intensity: c_double, // precursor intensity (f64::NAN = unknown)
+    pub frame_index: c_uint,         // precursor frame index (u32::MAX = N/A, i.e. MS1)
 }
 
 #[repr(C)]

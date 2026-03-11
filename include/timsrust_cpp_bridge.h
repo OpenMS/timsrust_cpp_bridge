@@ -27,6 +27,13 @@ typedef struct {
     const float* mz;
     const float* intensity;
     double   im;
+    /* Sage-parity fields */
+    uint32_t index;               /* spectrum index from SpectrumReader */
+    double   isolation_width;     /* isolation window width (0.0 if N/A) */
+    double   isolation_mz;        /* isolation window center m/z (0.0 if N/A) */
+    uint8_t  charge;              /* precursor charge (0 = unknown) */
+    double   precursor_intensity; /* precursor intensity (NaN = unknown) */
+    uint32_t frame_index;         /* precursor frame index (UINT32_MAX for MS1) */
 } tims_spectrum;
 
 typedef struct {

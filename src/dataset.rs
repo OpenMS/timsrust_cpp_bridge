@@ -170,11 +170,9 @@ impl TimsDataset {
         // Real implementation when timsrust feature is enabled.
         #[cfg(feature = "with_timsrust")]
         {
-            // Fetch spectrum from timsrust
             let spec = self.reader.get(index as usize)
                 .map_err(|_| TimsFfiStatus::IndexOutOfBounds)?;
 
-            // Convert mz/int to f32 buffers owned by this dataset handle.
             let n = spec.len();
             self.mz_buf.clear();
             self.mz_buf.reserve(n);
@@ -187,22 +185,29 @@ impl TimsDataset {
                 self.int_buf.push(v as f32);
             }
 
-            // Fill output struct
             out.num_peaks = n as u32;
             out.mz = if n == 0 { ptr::null() } else { self.mz_buf.as_ptr() };
             out.intensity = if n == 0 { ptr::null() } else { self.int_buf.as_ptr() };
+            out.index = spec.index as u32;
+            out.isolation_width = spec.isolation_width;
+            out.isolation_mz = spec.isolation_mz;
 
-            // Metadata: try to extract precursor RT/IM if available
             if let Some(prec) = spec.precursor {
                 out.rt_seconds = prec.rt;
                 out.precursor_mz = prec.mz;
                 out.im = prec.im;
                 out.ms_level = 2;
+                out.charge = prec.charge.map(|c| c as u8).unwrap_or(0);
+                out.precursor_intensity = prec.intensity.unwrap_or(f64::NAN);
+                out.frame_index = prec.frame_index as u32;
             } else {
                 out.rt_seconds = 0.0;
                 out.precursor_mz = 0.0;
                 out.im = 0.0;
                 out.ms_level = 1;
+                out.charge = 0;
+                out.precursor_intensity = f64::NAN;
+                out.frame_index = u32::MAX;
             }
 
             return Ok(());
@@ -218,6 +223,12 @@ impl TimsDataset {
             out.mz = ptr::null();
             out.intensity = ptr::null();
             out.im = 0.0;
+            out.index = 0;
+            out.isolation_width = 0.0;
+            out.isolation_mz = 0.0;
+            out.charge = 0;
+            out.precursor_intensity = f64::NAN;
+            out.frame_index = u32::MAX;
             Ok(())
         }
     }

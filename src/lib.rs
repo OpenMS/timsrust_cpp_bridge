@@ -320,6 +320,12 @@ pub extern "C" fn tims_get_spectra_by_rt(
                 mz: if mz_ptr.is_null() { std::ptr::null() } else { mz_ptr as *const f32 },
                 intensity: if int_ptr.is_null() { std::ptr::null() } else { int_ptr as *const f32 },
                 im: spec.precursor.map(|p| p.im).unwrap_or(0.0),
+                index: spec.index as u32,
+                isolation_width: spec.isolation_width,
+                isolation_mz: spec.isolation_mz,
+                charge: spec.precursor.and_then(|p| p.charge).map(|c| c as u8).unwrap_or(0),
+                precursor_intensity: spec.precursor.and_then(|p| p.intensity).unwrap_or(f64::NAN),
+                frame_index: spec.precursor.map(|p| p.frame_index as u32).unwrap_or(u32::MAX),
             };
             unsafe { arr_ptr.add(idx).write(out_spec); }
         }
