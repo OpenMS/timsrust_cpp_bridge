@@ -1,0 +1,127 @@
+name: CI & Release
+
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+  pull_request:
+    branches: [master]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            platform: linux-x86_64
+            archive_ext: tar.gz
+
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            platform: linux-aarch64
+            archive_ext: tar.gz
+
+          - os: macos-14
+            target: aarch64-apple-darwin
+            platform: macos-arm64
+            archive_ext: tar.gz
+
+          - os: windows-2025
+            target: x86_64-pc-windows-msvc
+            platform: windows-x86_64
+            archive_ext: zip
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run tests
+        run: cargo test --features with_timsrust
+
+      - name: Build release
+        run: cargo build --features with_timsrust --release
+
+      - name: Smoke test (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          g++ -std=c++17 examples/cpp_client.cpp \
+            -Iinclude \
+            -Ltarget/release -ltimsrust_cpp_bridge \
+            -lpthread -ldl -lm \
+            -o target/smoke_test
+          # Run with no args — expect exit code 1 (usage), fail only on signal/crash
+          target/smoke_test || if [ $? -gt 128 ]; then exit 1; fi
+
+      - name: Smoke test (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          clang++ -std=c++17 examples/cpp_client.cpp \
+            -Iinclude \
+            -Ltarget/release -ltimsrust_cpp_bridge \
+            -framework Security -framework SystemConfiguration \
+            -lresolv -lpthread \
+            -o target/smoke_test
+          # Run with no args — expect exit code 1 (usage), fail only on signal/crash
+          target/smoke_test || if [ $? -gt 128 ]; then exit 1; fi
+
+      - name: Setup MSVC dev environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Smoke test (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          cl.exe /std:c++17 /EHsc /Fe:target/smoke_test.exe \
+            /I include examples/cpp_client.cpp \
+            target/release/timsrust_cpp_bridge.lib \
+            ws2_32.lib userenv.lib bcrypt.lib ntdll.lib advapi32.lib
+          target/smoke_test.exe || if [ $? -gt 128 ]; then exit 1; fi
+
+      - name: Extract version from tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        id: version
+        shell: bash
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+
+      - name: Package
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: bash scripts/package.sh "${{ steps.version.outputs.version }}" "${{ matrix.target }}"
+
+      - name: Upload artifact
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: timsrust_cpp_bridge-v${{ steps.version.outputs.version }}-${{ matrix.platform }}
+          path: target/package/timsrust_cpp_bridge-v${{ steps.version.outputs.version }}-${{ matrix.platform }}.${{ matrix.archive_ext }}
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          generate_release_notes: true
