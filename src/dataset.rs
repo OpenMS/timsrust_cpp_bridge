@@ -84,88 +84,96 @@ pub struct TimsDataset {
 impl TimsDataset {
     pub fn open(path: &CStr) -> Result<Self, TimsFfiStatus> {
         let path_str = path.to_str().map_err(|_| TimsFfiStatus::InvalidUtf8)?;
-        // When using the real timsrust reader, SpectrumReader::new accepts a
-        // &str and returns a Result<SpectrumReader, _>. Our stub above uses
-        // a CStr-based new signature; handle both surfaces.
+
         #[cfg(feature = "with_timsrust")]
-        let reader = SpectrumReader::new(path_str)
-            .map_err(|_| TimsFfiStatus::OpenFailed)?;
+        {
+            let reader = SpectrumReader::new(path_str)
+                .map_err(|_| TimsFfiStatus::OpenFailed)?;
+            return Self::finish_open(path_str, reader);
+        }
 
         #[cfg(not(feature = "with_timsrust"))]
-        let reader = SpectrumReader::new(path)
-            .map_err(|_| TimsFfiStatus::OpenFailed)?;
-        // Attempt to compute swath windows, frame reader, and converters when
-        // timsrust feature is enabled.
-        #[cfg(feature = "with_timsrust")]
-        let (swath_windows, frame_reader, mz_converter, im_converter) = {
-            use timsrust::readers::QuadrupoleSettingsReader;
-            let mut out: Vec<TimsFfiSwathWindow> = Vec::new();
-            let fr = FrameReader::new(path_str)
+        {
+            let reader = SpectrumReader::new(path)
                 .map_err(|_| TimsFfiStatus::OpenFailed)?;
-            let metadata = MetadataReader::new(path_str)
-                .map_err(|_| TimsFfiStatus::OpenFailed)?;
-            let mz_conv = metadata.mz_converter;
-            let im_conv = metadata.im_converter;
-            if let Ok(quads) = QuadrupoleSettingsReader::new(path_str) {
-                for quad in quads.iter() {
-                    for i in 0..quad.len() {
-                        let center = quad.isolation_mz[i];
-                        let width = quad.isolation_width[i];
-                        let mz_lower = center - width / 2.0;
-                        let mz_upper = center + width / 2.0;
-                        let (im_lower, im_upper) = if i < quad.scan_starts.len() && i < quad.scan_ends.len() {
-                            let start = quad.scan_starts[i] as f64;
-                            let end = quad.scan_ends[i] as f64;
-                            let im_start = im_conv.convert(start);
-                            let im_end = im_conv.convert(end);
-                            (im_start.min(im_end), im_start.max(im_end))
-                        } else {
-                            (metadata.lower_im, metadata.upper_im)
-                        };
-                        out.push(TimsFfiSwathWindow {
-                            mz_lower,
-                            mz_upper,
-                            mz_center: center,
-                            im_lower,
-                            im_upper,
-                            is_ms1: 0,
-                        });
-                    }
-                }
-            }
-            (if out.is_empty() { None } else { Some(out) }, fr, mz_conv, im_conv)
-        };
-
-        #[cfg(not(feature = "with_timsrust"))]
-        let (swath_windows, frame_reader, mz_converter, im_converter) = {
             let fr = FrameReader::new(path_str).map_err(|_| TimsFfiStatus::OpenFailed)?;
-            (None, fr, Tof2MzConverter, Scan2ImConverter)
-        };
+            Ok(TimsDataset {
+                reader,
+                mz_buf: Vec::new(),
+                int_buf: Vec::new(),
+                frame_tof_buf: Vec::new(),
+                frame_int_buf: Vec::new(),
+                frame_scan_offset_buf: Vec::new(),
+                frame_reader: fr,
+                mz_converter: Tof2MzConverter,
+                im_converter: Scan2ImConverter,
+                swath_windows: None,
+                last_error: None,
+                rt_index: Vec::new(),
+            })
+        }
+    }
 
-        // Build RT index: cheaply read per-precursor RT without decompressing
-        // peak data, so we can do fast nearest-RT lookups later.
-        #[cfg(feature = "with_timsrust")]
-        let rt_index = {
-            use timsrust::readers::PrecursorReader;
-            let mut idx: Vec<(f64, usize)> = Vec::new();
-            if let Ok(prec_reader) = PrecursorReader::build()
-                .with_path(path_str)
-                .finalize()
-            {
-                let n = prec_reader.len();
-                idx.reserve(n);
-                for i in 0..n {
-                    if let Some(p) = prec_reader.get(i) {
-                        idx.push((p.rt, i));
-                    }
+    /// Common post-reader setup: reads metadata, builds swath windows, RT
+    /// index, and frame reader. Only compiled with the real timsrust feature.
+    #[cfg(feature = "with_timsrust")]
+    fn finish_open(path_str: &str, reader: SpectrumReader) -> Result<Self, TimsFfiStatus> {
+        use timsrust::readers::QuadrupoleSettingsReader;
+        use timsrust::readers::PrecursorReader;
+
+        let fr = FrameReader::new(path_str)
+            .map_err(|_| TimsFfiStatus::OpenFailed)?;
+
+        let metadata = MetadataReader::new(path_str)
+            .map_err(|_| TimsFfiStatus::OpenFailed)?;
+        let mz_conv = metadata.mz_converter;
+        let im_conv = metadata.im_converter;
+
+        let mut sw_out: Vec<TimsFfiSwathWindow> = Vec::new();
+        if let Ok(quads) = QuadrupoleSettingsReader::new(path_str) {
+            for quad in quads.iter() {
+                for i in 0..quad.len() {
+                    let center = quad.isolation_mz[i];
+                    let width = quad.isolation_width[i];
+                    let mz_lower = center - width / 2.0;
+                    let mz_upper = center + width / 2.0;
+                    let (im_lower, im_upper) = if i < quad.scan_starts.len() && i < quad.scan_ends.len() {
+                        let start = quad.scan_starts[i] as f64;
+                        let end = quad.scan_ends[i] as f64;
+                        let im_start = im_conv.convert(start);
+                        let im_end = im_conv.convert(end);
+                        (im_start.min(im_end), im_start.max(im_end))
+                    } else {
+                        (metadata.lower_im, metadata.upper_im)
+                    };
+                    sw_out.push(TimsFfiSwathWindow {
+                        mz_lower,
+                        mz_upper,
+                        mz_center: center,
+                        im_lower,
+                        im_upper,
+                        is_ms1: 0,
+                    });
                 }
-                idx.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
             }
-            idx
-        };
+        }
+        let swath_windows = if sw_out.is_empty() { None } else { Some(sw_out) };
 
-        #[cfg(not(feature = "with_timsrust"))]
-        let rt_index: Vec<(f64, usize)> = Vec::new();
+        // Build RT index
+        let mut rt_index: Vec<(f64, usize)> = Vec::new();
+        if let Ok(prec_reader) = PrecursorReader::build()
+            .with_path(path_str)
+            .finalize()
+        {
+            let n = prec_reader.len();
+            rt_index.reserve(n);
+            for i in 0..n {
+                if let Some(p) = prec_reader.get(i) {
+                    rt_index.push((p.rt, i));
+                }
+            }
+            rt_index.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        }
 
         Ok(TimsDataset {
             reader,
@@ -174,13 +182,31 @@ impl TimsDataset {
             frame_tof_buf: Vec::new(),
             frame_int_buf: Vec::new(),
             frame_scan_offset_buf: Vec::new(),
-            frame_reader,
-            mz_converter,
-            im_converter,
+            frame_reader: fr,
+            mz_converter: mz_conv,
+            im_converter: im_conv,
             swath_windows,
             last_error: None,
             rt_index,
         })
+    }
+
+    /// Open a dataset with a custom SpectrumReaderConfig.
+    #[cfg(feature = "with_timsrust")]
+    pub fn open_with_config(path: &CStr, config: &crate::config::TimsFfiConfig) -> Result<Self, TimsFfiStatus> {
+        let path_str = path.to_str().map_err(|_| TimsFfiStatus::InvalidUtf8)?;
+        let reader = timsrust::readers::SpectrumReader::build()
+            .with_path(path_str)
+            .with_config(config.inner.clone())
+            .finalize()
+            .map_err(|_| TimsFfiStatus::OpenFailed)?;
+        Self::finish_open(path_str, reader)
+    }
+
+    /// Stub: open_with_config delegates to open when timsrust is not enabled.
+    #[cfg(not(feature = "with_timsrust"))]
+    pub fn open_with_config(path: &CStr, _config: &crate::config::TimsFfiConfig) -> Result<Self, TimsFfiStatus> {
+        Self::open(path)
     }
 
     pub fn len(&self) -> u32 {

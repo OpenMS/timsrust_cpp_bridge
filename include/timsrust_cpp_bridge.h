@@ -183,6 +183,47 @@ timsffi_status tims_get_frames_by_level(tims_dataset* handle, uint8_t ms_level, 
  */
 void tims_free_frame_array(tims_dataset* handle, tims_frame* frames, unsigned int count);
 
+/* -------------------------------------------------------------------------
+ * Index converters (TOF -> m/z, scan -> ion mobility)
+ * ------------------------------------------------------------------------- */
+
+/* Convert a single TOF index to m/z. Returns NaN if handle is NULL. */
+double tims_convert_tof_to_mz(const tims_dataset* handle, uint32_t tof_index);
+
+/* Convert a single scan index to ion mobility (1/K0). Returns NaN if handle is NULL. */
+double tims_convert_scan_to_im(const tims_dataset* handle, uint32_t scan_index);
+
+/* Batch convert TOF indices to m/z. Caller provides output buffer. */
+timsffi_status tims_convert_tof_to_mz_array(const tims_dataset* handle,
+                                             const uint32_t* tof_indices, uint32_t count,
+                                             double* out_mz);
+
+/* Batch convert scan indices to ion mobility. Caller provides output buffer. */
+timsffi_status tims_convert_scan_to_im_array(const tims_dataset* handle,
+                                              const uint32_t* scan_indices, uint32_t count,
+                                              double* out_im);
+
+/* -------------------------------------------------------------------------
+ * Opaque configuration for SpectrumReader construction
+ * ------------------------------------------------------------------------- */
+
+typedef struct tims_config tims_config;
+
+/* Create a new config with default values. Caller must free with tims_config_free. */
+tims_config *tims_config_create(void);
+
+/* Free a config created by tims_config_create. */
+void tims_config_free(tims_config *cfg);
+
+/* SpectrumProcessingParams setters */
+void tims_config_set_smoothing_window(tims_config *cfg, uint32_t window);
+void tims_config_set_centroiding_window(tims_config *cfg, uint32_t window);
+void tims_config_set_calibration_tolerance(tims_config *cfg, double tolerance);
+void tims_config_set_calibrate(tims_config *cfg, uint8_t enabled); /* 0=off, non-zero=on */
+
+/* Open dataset with custom config. Existing tims_open uses defaults. */
+timsffi_status tims_open_with_config(const char* path, const tims_config* cfg, tims_dataset** out);
+
 
 #ifdef __cplusplus
 }

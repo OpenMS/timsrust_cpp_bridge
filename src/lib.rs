@@ -1,7 +1,9 @@
 // src/lib.rs
+mod config;
 mod dataset;
 mod types;
 
+use crate::config::TimsFfiConfig;
 use crate::dataset::TimsDataset;
 use crate::types::{TimsFfiSpectrum, TimsFfiFrame, TimsFfiStatus, TimsFfiFileInfo, TimsFfiLevelStats};
 use std::ffi::CStr;
@@ -660,4 +662,127 @@ pub extern "C" fn tims_convert_scan_to_im_array(
         unsafe { *out_im.add(i) = ds.im_converter.convert(idx as f64); }
     }
     TimsFfiStatus::Ok
+}
+
+// -------------------------------------------------------------------------
+// Opaque configuration for SpectrumReader construction
+// -------------------------------------------------------------------------
+
+/// Opaque config type for C callers.
+#[repr(C)]
+pub struct tims_config {
+    inner: TimsFfiConfig,
+}
+
+#[no_mangle]
+pub extern "C" fn tims_config_create() -> *mut tims_config {
+    let cfg = Box::new(tims_config {
+        inner: TimsFfiConfig::new(),
+    });
+    Box::into_raw(cfg)
+}
+
+#[no_mangle]
+pub extern "C" fn tims_config_free(cfg: *mut tims_config) {
+    if cfg.is_null() { return; }
+    unsafe { drop(Box::from_raw(cfg)); }
+}
+
+#[no_mangle]
+pub extern "C" fn tims_config_set_smoothing_window(cfg: *mut tims_config, window: c_uint) {
+    if cfg.is_null() { return; }
+    let c = unsafe { &mut (*cfg).inner };
+    c.set_smoothing_window(window);
+}
+
+#[no_mangle]
+pub extern "C" fn tims_config_set_centroiding_window(cfg: *mut tims_config, window: c_uint) {
+    if cfg.is_null() { return; }
+    let c = unsafe { &mut (*cfg).inner };
+    c.set_centroiding_window(window);
+}
+
+#[no_mangle]
+pub extern "C" fn tims_config_set_calibration_tolerance(cfg: *mut tims_config, tolerance: c_double) {
+    if cfg.is_null() { return; }
+    let c = unsafe { &mut (*cfg).inner };
+    c.set_calibration_tolerance(tolerance);
+}
+
+#[no_mangle]
+pub extern "C" fn tims_config_set_calibrate(cfg: *mut tims_config, enabled: u8) {
+    if cfg.is_null() { return; }
+    let c = unsafe { &mut (*cfg).inner };
+    c.set_calibrate(enabled != 0);
+}
+
+#[no_mangle]
+pub extern "C" fn tims_open_with_config(
+    path: *const c_char,
+    cfg: *const tims_config,
+    out_handle: *mut *mut tims_dataset,
+) -> TimsFfiStatus {
+    if path.is_null() || cfg.is_null() || out_handle.is_null() {
+        return TimsFfiStatus::Internal;
+    }
+    let cstr = unsafe { CStr::from_ptr(path) };
+    let path_str = match cstr.to_str() {
+        Ok(s) => s,
+        Err(_) => return TimsFfiStatus::InvalidUtf8,
+    };
+    if std::fs::metadata(path_str).is_err() {
+        if let Ok(mut g) = LAST_ERROR.lock() { *g = Some(format!("path not found: {}", path_str)); }
+        return TimsFfiStatus::OpenFailed;
+    }
+
+    let path_owned = path_str.to_string();
+
+    // Clone config data for the thread. For the with_timsrust build we
+    // extract the inner SpectrumReaderConfig which is Send. For the stub
+    // build we just create a fresh dummy inside the thread.
+    #[cfg(feature = "with_timsrust")]
+    let config_inner = unsafe { (*cfg).inner.inner.clone() };
+
+    let (tx, rx) = mpsc::channel();
+    let thr = thread::spawn(move || {
+        let c = CString::new(path_owned).unwrap();
+        let res = std::panic::catch_unwind(|| {
+            let mut cfg_local = TimsFfiConfig::new();
+            #[cfg(feature = "with_timsrust")]
+            { cfg_local.inner = config_inner; }
+            TimsDataset::open_with_config(c.as_c_str(), &cfg_local)
+        });
+        match res {
+            Ok(Ok(inner)) => { let _ = tx.send(Ok(inner)); }
+            Ok(Err(e)) => { let _ = tx.send(Err(format!("open error: {:?}", e))); }
+            Err(p) => {
+                let msg = if let Some(s) = p.downcast_ref::<&str>() { s.to_string() }
+                    else if let Some(s) = p.downcast_ref::<String>() { s.clone() }
+                    else { "panic during open".to_string() };
+                let _ = tx.send(Err(format!("panic: {}", msg)));
+            }
+        }
+    });
+
+    let got = match thr.join() {
+        Ok(_) => rx.recv(),
+        Err(_) => Err(std::sync::mpsc::RecvError),
+    };
+
+    match got {
+        Ok(Ok(inner)) => {
+            let boxed = Box::new(tims_dataset { inner });
+            unsafe { *out_handle = Box::into_raw(boxed); }
+            if let Ok(mut g) = LAST_ERROR.lock() { *g = None; }
+            TimsFfiStatus::Ok
+        }
+        Ok(Err(msg)) => {
+            if let Ok(mut g) = LAST_ERROR.lock() { *g = Some(msg); }
+            TimsFfiStatus::OpenFailed
+        }
+        Err(_) => {
+            if let Ok(mut g) = LAST_ERROR.lock() { *g = Some("open join/recv failed".to_string()); }
+            TimsFfiStatus::OpenFailed
+        }
+    }
 }
