@@ -166,10 +166,38 @@ Replace the `let out_spec = TimsFfiSpectrum { ... }` block (around line 315) wit
 Run: `cargo check`
 Expected: PASS — all `TimsFfiSpectrum` construction sites now include new fields.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 3: Also verify with timsrust feature (if available)**
+
+Run: `cargo check --features with_timsrust`
+Expected: PASS (confirms timsrust field names like `spec.isolation_width`, `spec.isolation_mz`, `prec.charge`, `prec.intensity`, `prec.frame_index` are correct). If this fails due to missing timsrust dependency in the environment, defer to CI.
+
+- [ ] **Step 4: Update C header tims_spectrum struct**
+
+In `include/timsrust_cpp_bridge.h`, replace the existing `tims_spectrum` typedef to match the Rust struct:
+
+```c
+typedef struct {
+    double   rt_seconds;
+    double   precursor_mz;
+    uint8_t  ms_level;
+    uint32_t num_peaks;
+    const float* mz;
+    const float* intensity;
+    double   im;
+    /* Sage-parity fields */
+    uint32_t index;               /* spectrum index from SpectrumReader */
+    double   isolation_width;     /* isolation window width (0.0 if N/A) */
+    double   isolation_mz;        /* isolation window center m/z (0.0 if N/A) */
+    uint8_t  charge;              /* precursor charge (0 = unknown) */
+    double   precursor_intensity; /* precursor intensity (NaN = unknown) */
+    uint32_t frame_index;         /* precursor frame index (UINT32_MAX for MS1) */
+} tims_spectrum;
+```
+
+- [ ] **Step 5: Commit**
 
 ```bash
-git add src/types.rs src/dataset.rs src/lib.rs
+git add src/types.rs src/dataset.rs src/lib.rs include/timsrust_cpp_bridge.h
 git commit -m "feat: extend TimsFfiSpectrum with index, isolation, charge, precursor_intensity, frame_index"
 ```
 
@@ -436,9 +464,9 @@ Add after the `get_swath_windows` method:
             };
             out.num_scans = num_scans;
             out.num_peaks = frame.tof_indices.len() as u32;
-            out.tof_indices = self.frame_tof_buf.as_ptr();
-            out.intensities = self.frame_int_buf.as_ptr();
-            out.scan_offsets = self.frame_scan_offset_buf.as_ptr();
+            out.tof_indices = if out.num_peaks == 0 { ptr::null() } else { self.frame_tof_buf.as_ptr() };
+            out.intensities = if out.num_peaks == 0 { ptr::null() } else { self.frame_int_buf.as_ptr() };
+            out.scan_offsets = if num_scans == 0 { ptr::null() } else { self.frame_scan_offset_buf.as_ptr() };
 
             return Ok(());
         }
@@ -544,8 +572,15 @@ pub extern "C" fn tims_get_frames_by_level(
             ds.frame_reader.get_all_ms2()
         };
 
-        // Collect successful frames, skip errors
-        let frames: Vec<_> = frames_result.into_iter().filter_map(|r| r.ok()).collect();
+        // Collect frames, failing on any read error
+        let frames: Vec<_> = match frames_result.into_iter().collect::<Result<Vec<_>, _>>() {
+            Ok(v) => v,
+            Err(_) => {
+                ds.last_error = Some("failed to read one or more frames".to_string());
+                unsafe { *out_count = 0; *out_frames = std::ptr::null_mut(); }
+                return TimsFfiStatus::Internal;
+            }
+        };
         let n = frames.len();
 
         if n == 0 {
@@ -665,10 +700,55 @@ pub extern "C" fn tims_free_frame_array(
 Run: `cargo check`
 Expected: PASS
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Also verify with timsrust feature (if available)**
+
+Run: `cargo check --features with_timsrust`
+Expected: PASS (confirms `FrameReader::get`, `get_all_ms1`/`get_all_ms2`, `Frame` field names). If this fails due to missing timsrust dependency, defer to CI.
+
+- [ ] **Step 7: Update C header with frame types and functions**
+
+In `include/timsrust_cpp_bridge.h`, add after the `tims_swath_window` typedef:
+
+```c
+typedef struct {
+    uint32_t  index;          /* frame index */
+    double    rt_seconds;     /* retention time in seconds */
+    uint8_t   ms_level;       /* 1=MS1, 2=MS2, 0=Unknown */
+    uint32_t  num_scans;      /* number of scans */
+    uint32_t  num_peaks;      /* total peaks (length of tof_indices & intensities) */
+    const uint32_t *tof_indices;    /* raw TOF indices, flat array */
+    const uint32_t *intensities;    /* raw intensities, flat array */
+    const uint64_t *scan_offsets;   /* per-scan offsets (length: num_scans + 1) */
+} tims_frame;
+```
+
+And add the function declarations before the `#ifdef __cplusplus` closing:
+
+```c
+/* -------------------------------------------------------------------------
+ * Frame-level access (raw TOF indices, not converted to m/z)
+ * ------------------------------------------------------------------------- */
+
+/* Get a single frame by index. Buffers are handle-owned, valid until the
+ * next call to tims_get_frame on the same handle. Frame and spectrum
+ * buffers are independent. */
+timsffi_status tims_get_frame(tims_dataset* handle, uint32_t index, tims_frame* out);
+
+/* Get all frames at a given MS level (1=MS1, 2=MS2).
+ * Returns malloc'd array; free with tims_free_frame_array.
+ * Invalid ms_level returns empty array with TIMSFFI_OK. */
+timsffi_status tims_get_frames_by_level(tims_dataset* handle, uint8_t ms_level,
+                                        tims_frame** out_frames, uint32_t* out_count);
+
+/* Free frames allocated by tims_get_frames_by_level. Frees per-frame
+ * tof_indices, intensities, scan_offsets arrays, then the array itself. */
+void tims_free_frame_array(tims_dataset* handle, tims_frame* frames, uint32_t count);
+```
+
+- [ ] **Step 8: Commit**
 
 ```bash
-git add src/lib.rs
+git add src/lib.rs include/timsrust_cpp_bridge.h
 git commit -m "feat: add tims_get_frame, tims_get_frames_by_level, tims_free_frame_array FFI exports"
 ```
 
@@ -1149,67 +1229,36 @@ pub extern "C" fn tims_open_with_config(
 Run: `cargo check`
 Expected: PASS
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 7: Also verify with timsrust feature (if available)**
 
-```bash
-git add src/config.rs src/dataset.rs src/lib.rs
-git commit -m "feat: add config builder and tims_open_with_config, converter FFI exports"
-```
+Run: `cargo check --features with_timsrust`
+Expected: PASS (confirms `SpectrumReaderConfig`, `SpectrumProcessingParams` field names, `ConvertableDomain::convert`). If this fails due to missing timsrust dependency, defer to CI.
 
----
+- [ ] **Step 8: Update C header with converter and config declarations**
 
-## Chunk 4: C Header and Example
-
-### Task 9: Update C header
-
-**Files:**
-- Modify: `include/timsrust_cpp_bridge.h`
-
-- [ ] **Step 1: Update tims_spectrum struct**
-
-Replace the existing `tims_spectrum` typedef:
+In `include/timsrust_cpp_bridge.h`, add before the `#ifdef __cplusplus` closing:
 
 ```c
-typedef struct {
-    double   rt_seconds;
-    double   precursor_mz;
-    uint8_t  ms_level;
-    uint32_t num_peaks;
-    const float* mz;
-    const float* intensity;
-    double   im;
-    /* Sage-parity fields */
-    uint32_t index;               /* spectrum index from SpectrumReader */
-    double   isolation_width;     /* isolation window width (0.0 if N/A) */
-    double   isolation_mz;        /* isolation window center m/z (0.0 if N/A) */
-    uint8_t  charge;              /* precursor charge (0 = unknown) */
-    double   precursor_intensity; /* precursor intensity (NaN = unknown) */
-    uint32_t frame_index;         /* precursor frame index (UINT32_MAX for MS1) */
-} tims_spectrum;
-```
+/* -------------------------------------------------------------------------
+ * Index converters (TOF -> m/z, scan -> ion mobility)
+ * ------------------------------------------------------------------------- */
 
-- [ ] **Step 2: Add tims_frame struct**
+/* Convert a single TOF index to m/z. Returns NaN if handle is NULL. */
+double tims_convert_tof_to_mz(const tims_dataset* handle, uint32_t tof_index);
 
-After the `tims_swath_window` typedef:
+/* Convert a single scan index to ion mobility (1/K0). Returns NaN if handle is NULL. */
+double tims_convert_scan_to_im(const tims_dataset* handle, uint32_t scan_index);
 
-```c
-typedef struct {
-    uint32_t  index;          /* frame index */
-    double    rt_seconds;     /* retention time in seconds */
-    uint8_t   ms_level;       /* 1=MS1, 2=MS2, 0=Unknown */
-    uint32_t  num_scans;      /* number of scans */
-    uint32_t  num_peaks;      /* total peaks (length of tof_indices & intensities) */
-    const uint32_t *tof_indices;    /* raw TOF indices, flat array */
-    const uint32_t *intensities;    /* raw intensities, flat array */
-    const uint64_t *scan_offsets;   /* per-scan offsets (length: num_scans + 1) */
-} tims_frame;
-```
+/* Batch convert TOF indices to m/z. Caller provides output buffer. */
+timsffi_status tims_convert_tof_to_mz_array(const tims_dataset* handle,
+                                             const uint32_t* tof_indices, uint32_t count,
+                                             double* out_mz);
 
-- [ ] **Step 3: Add tims_config opaque type and function declarations**
+/* Batch convert scan indices to ion mobility. Caller provides output buffer. */
+timsffi_status tims_convert_scan_to_im_array(const tims_dataset* handle,
+                                              const uint32_t* scan_indices, uint32_t count,
+                                              double* out_im);
 
-Before the `#ifdef __cplusplus` closing:
-
-```c
 /* -------------------------------------------------------------------------
  * Opaque configuration for SpectrumReader construction
  * ------------------------------------------------------------------------- */
@@ -1232,61 +1281,18 @@ void tims_config_set_calibrate(tims_config *cfg, uint8_t enabled); /* 0=off, non
 timsffi_status tims_open_with_config(const char* path, const tims_config* cfg, tims_dataset** out);
 ```
 
-- [ ] **Step 4: Add frame function declarations**
-
-```c
-/* -------------------------------------------------------------------------
- * Frame-level access (raw TOF indices, not converted to m/z)
- * ------------------------------------------------------------------------- */
-
-/* Get a single frame by index. Buffers are handle-owned, valid until the
- * next call to tims_get_frame on the same handle. Frame and spectrum
- * buffers are independent. */
-timsffi_status tims_get_frame(tims_dataset* handle, uint32_t index, tims_frame* out);
-
-/* Get all frames at a given MS level (1=MS1, 2=MS2).
- * Returns malloc'd array; free with tims_free_frame_array.
- * Invalid ms_level returns empty array with TIMSFFI_OK. */
-timsffi_status tims_get_frames_by_level(tims_dataset* handle, uint8_t ms_level,
-                                        tims_frame** out_frames, uint32_t* out_count);
-
-/* Free frames allocated by tims_get_frames_by_level. Frees per-frame
- * tof_indices, intensities, scan_offsets arrays, then the array itself. */
-void tims_free_frame_array(tims_dataset* handle, tims_frame* frames, uint32_t count);
-```
-
-- [ ] **Step 5: Add converter function declarations**
-
-```c
-/* -------------------------------------------------------------------------
- * Index converters (TOF -> m/z, scan -> ion mobility)
- * ------------------------------------------------------------------------- */
-
-/* Convert a single TOF index to m/z. Returns NaN if handle is NULL. */
-double tims_convert_tof_to_mz(const tims_dataset* handle, uint32_t tof_index);
-
-/* Convert a single scan index to ion mobility (1/K0). Returns NaN if handle is NULL. */
-double tims_convert_scan_to_im(const tims_dataset* handle, uint32_t scan_index);
-
-/* Batch convert TOF indices to m/z. Caller provides output buffer. */
-timsffi_status tims_convert_tof_to_mz_array(const tims_dataset* handle,
-                                             const uint32_t* tof_indices, uint32_t count,
-                                             double* out_mz);
-
-/* Batch convert scan indices to ion mobility. Caller provides output buffer. */
-timsffi_status tims_convert_scan_to_im_array(const tims_dataset* handle,
-                                              const uint32_t* scan_indices, uint32_t count,
-                                              double* out_im);
-```
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
-git add include/timsrust_cpp_bridge.h
-git commit -m "feat: update C header with frame, converter, and config declarations"
+git add src/config.rs src/dataset.rs src/lib.rs include/timsrust_cpp_bridge.h
+git commit -m "feat: add config builder, tims_open_with_config, and converter FFI exports"
 ```
 
-### Task 10: Update C++ example
+---
+
+## Chunk 4: C++ Example
+
+### Task 9: Update C++ example
 
 **Files:**
 - Modify: `examples/cpp_client.cpp`
