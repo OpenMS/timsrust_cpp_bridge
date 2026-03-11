@@ -12,7 +12,7 @@ This project exposes a small stable C interface for reading Bruker `.d` datasets
   - Without the feature (default) — provides lightweight stubs that allow building and exercising the C ABI surface for CI and development without the `timsrust` dependency.
 - Example client in `examples/cpp_client.cpp` prints OpenMS FileInfo-like output when built against the real reader.
 
-[!NOTE]
+> [!NOTE]
 > A future `timsrust` release may include refactors that require updating the integration points in this crate when upgrading the dependency.
 
 ## Implemented Functionality
