@@ -6,12 +6,14 @@ This project exposes a small stable C interface for reading Bruker `.d` datasets
 
 ## Current Status
 
-- Working prototype with real dataset support when built with `--features with_timsrust`.
-- C API is usable from C and C++ (`cdylib` and `staticlib` are produced).
-- Example client in `examples/cpp_client.cpp` prints OpenMS FileInfo-like output.
+- Working prototype that exposes a small C ABI for reading Bruker `.d` datasets.
+- The crate can be built in two modes:
+  - With real reader support enabled (`--features with_timsrust`) — provides full functionality and real data access.
+  - Without the feature (default) — provides lightweight stubs that allow building and exercising the C ABI surface for CI and development without the `timsrust` dependency.
+- Example client in `examples/cpp_client.cpp` prints OpenMS FileInfo-like output when built against the real reader.
 
 [!NOTE]
-> A future timsrust release is expected to include substantial refactors, so some internal Rust integration points may require updates when upgrading timsrust.
+> A future `timsrust` release may include refactors that require updating the integration points in this crate when upgrading the dependency.
 
 ## Implemented Functionality
 
@@ -34,21 +36,27 @@ Implemented API (high level):
 - Aggregate statistics:
   - `tims_file_info` (per-level counts/ranges + total peaks + timing)
 
-## Build
+## Building
 
-From project root:
+This crate supports two build modes. By default the crate builds without the external `timsrust` dependency and provides minimal stubs for the FFI surface. To enable real dataset reading you must enable the `with_timsrust` feature.
+
+Build with real reader support (recommended for actual dataset access):
 
 ```bash
-cargo build --features with_timsrust
+cargo build --features with_timsrust --release
 ```
 
-Artifacts are generated in `target/debug/` (or `target/release/` if built in release mode), including:
-- `libtimsrust_cpp_bridge.so`
-- static library variant
+Build only the FFI surface (no `timsrust` dependency; useful for CI or compilation tests):
+
+```bash
+cargo build --release
+```
+
+Artifacts are generated in `target/release/` (or `target/debug/` if not using `--release`). Expected artifacts include platform-specific shared/static libraries, for example `libtimsrust_cpp_bridge.so` on Linux.
 
 ## Use From C++
 
-Include the header and link against the built library.
+Include the header and link against the built library. When linking against a build that used `--features with_timsrust` the API will access real data; when linking against a build without the feature, the functions are present but operate as minimal stubs.
 
 ### Minimal compile example
 
@@ -98,6 +106,12 @@ int main(int argc, char** argv) {
 - For DIA-PASEF datasets, `tims_num_spectra` reflects expanded MS2 spectra, while `tims_num_frames` reflects raw LC frames (including MS1).
 - `tims_file_info` performs a full scan and can take significant time on large datasets.
 - Error details are available via `tims_get_last_error`.
+
+Additional notes:
+
+- The `with_timsrust` feature must be enabled to access real Bruker `.d` datasets. Building without the feature will succeed but return empty/default values from reader functions — this is intentional for CI and development where `timsrust` may not be available.
+- Placeholder project files included in the repository (for example `build.rs`, `cbindgen.toml`, and `src/errors.rs`) are intentionally present to keep the build surface consistent and to support downstream tooling. We recommend tracking them in git so collaborators and CI have a reproducible workspace.
+- When preparing artifacts for consumption by native projects (e.g., OpenMS) consider producing a release bundle containing the shared/static library and the header file to avoid requiring consumers to use Cargo directly.
 
 ## Example Program
 
