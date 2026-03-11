@@ -74,7 +74,7 @@ jobs:
           clang++ -std=c++17 examples/cpp_client.cpp \
             -Iinclude \
             target/release/libtimsrust_cpp_bridge.a \
-            -framework Security -framework SystemConfiguration \
+            -framework Security -framework SystemConfiguration -framework CoreFoundation \
             -lresolv -lpthread \
             -o target/smoke_test
           # Run with no args — expect exit code 1 (usage), fail only on signal/crash
