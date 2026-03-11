@@ -1,0 +1,166 @@
+name: CI & Release
+
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+  pull_request:
+    branches: [master]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            platform: linux-x86_64
+            archive_ext: tar.gz
+
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            platform: linux-aarch64
+            archive_ext: tar.gz
+
+          - os: macos-14
+            target: aarch64-apple-darwin
+            platform: macos-arm64
+            archive_ext: tar.gz
+
+          - os: windows-2025
+            target: x86_64-pc-windows-msvc
+            platform: windows-x86_64
+            archive_ext: zip
+
+    runs-on: ${{ matrix.os }}
+
+    # Must match OpenMS's MACOSX_DEPLOYMENT_TARGET (see pyOpenMS pyproject.toml
+    # and openms_ci_matrix_full.yml) to avoid deployment target mismatch warnings
+    # when linking the static library into OpenMS/pyOpenMS.
+    env:
+      MACOSX_DEPLOYMENT_TARGET: ${{ startsWith(matrix.os, 'macos') && '14.0' || '' }}
+
+    steps:
+      # actions/checkout v6.0.2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Install Rust toolchain
+        # dtolnay/rust-toolchain stable branch
+        uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
+        with:
+          toolchain: stable
+
+      - name: Cache Cargo
+        # Swatinem/rust-cache v2.8.2
+        uses: Swatinem/rust-cache@401aff9a7a08acb9d27b64936a90db81024cff97
+
+      - name: Run tests
+        run: cargo test --features with_timsrust
+
+      - name: Build release
+        run: cargo build --features with_timsrust --release
+
+      - name: Smoke test (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          g++ -std=c++17 examples/cpp_client.cpp \
+            -Iinclude \
+            target/release/libtimsrust_cpp_bridge.a \
+            -lpthread -ldl -lm \
+            -o target/smoke_test
+          # Run with no args — expect exit code 1 (usage), fail only on signal/crash
+          target/smoke_test || if [ $? -gt 128 ]; then exit 1; fi
+
+      - name: Smoke test (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          clang++ -std=c++17 examples/cpp_client.cpp \
+            -Iinclude \
+            target/release/libtimsrust_cpp_bridge.a \
+            -framework Security -framework SystemConfiguration -framework CoreFoundation \
+            -lresolv -lpthread \
+            -o target/smoke_test
+          # Run with no args — expect exit code 1 (usage), fail only on signal/crash
+          target/smoke_test || if [ $? -gt 128 ]; then exit 1; fi
+
+      - name: Setup MSVC dev environment
+        if: runner.os == 'Windows'
+        # ilammy/msvc-dev-cmd v1.13.0
+        uses: ilammy/msvc-dev-cmd@a102174a2b586eec2ea151a69e6fd14404a8ce7c
+
+      - name: Smoke test (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          cl.exe /std:c++17 /EHsc /MD /Fe:target\smoke_test.exe /I include examples\cpp_client.cpp target\release\timsrust_cpp_bridge.lib ws2_32.lib userenv.lib bcrypt.lib ntdll.lib advapi32.lib
+          target\smoke_test.exe
+          if %errorlevel% GEQ 2 exit /b %errorlevel%
+          exit /b 0
+
+      - name: Set version
+        id: version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.0.0-dev" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Package
+        shell: bash
+        run: bash scripts/package.sh "${{ steps.version.outputs.version }}" "${{ matrix.target }}"
+
+      - name: Validate CMake package
+        shell: bash
+        run: |
+          ARCHIVE_DIR="target/package/timsrust_cpp_bridge-v${{ steps.version.outputs.version }}-${{ matrix.platform }}/timsrust_cpp_bridge"
+          mkdir -p /tmp/timsrust_cmake_test
+          cat > /tmp/timsrust_cmake_test/CMakeLists.txt << 'CMAKEOF'
+          cmake_minimum_required(VERSION 3.11)
+          project(test_consumer CXX)
+          set(CMAKE_CXX_STANDARD 17)
+          find_package(timsrust_cpp_bridge REQUIRED)
+          add_executable(test_consumer test.cpp)
+          target_link_libraries(test_consumer timsrust_cpp_bridge::timsrust_cpp_bridge)
+          CMAKEOF
+          cat > /tmp/timsrust_cmake_test/test.cpp << 'CPPEOF'
+          #include "timsrust_cpp_bridge.h"
+          int main() { return 0; }
+          CPPEOF
+          cmake -S /tmp/timsrust_cmake_test -B /tmp/timsrust_cmake_test/build \
+            -DCMAKE_PREFIX_PATH="$(pwd)/${ARCHIVE_DIR}"
+          cmake --build /tmp/timsrust_cmake_test/build
+          rm -rf /tmp/timsrust_cmake_test
+
+      - name: Upload artifact
+        if: startsWith(github.ref, 'refs/tags/v')
+        # actions/upload-artifact v7.0.0
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
+        with:
+          name: timsrust_cpp_bridge-v${{ steps.version.outputs.version }}-${{ matrix.platform }}
+          path: target/package/timsrust_cpp_bridge-v${{ steps.version.outputs.version }}-${{ matrix.platform }}.${{ matrix.archive_ext }}
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        # actions/download-artifact v8.0.1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          path: artifacts/
+
+      - name: Create GitHub Release
+        # softprops/action-gh-release v2.5.0
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b
+        with:
+          files: artifacts/**/*
+          generate_release_notes: true

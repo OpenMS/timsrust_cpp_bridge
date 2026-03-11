@@ -1,0 +1,33 @@
+# timsrust_cpp_bridgeConfig.cmake
+# Config-mode package file for timsrust_cpp_bridge
+#
+# Provides imported target: timsrust_cpp_bridge::timsrust_cpp_bridge
+#
+# This file lives at <prefix>/lib/cmake/timsrust_cpp_bridge/timsrust_cpp_bridgeConfig.cmake
+# The prefix is resolved relative to this file's location.
+
+get_filename_component(_TIMSRUST_PREFIX "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)
+
+if(NOT TARGET timsrust_cpp_bridge::timsrust_cpp_bridge)
+  add_library(timsrust_cpp_bridge::timsrust_cpp_bridge STATIC IMPORTED)
+
+  set_target_properties(timsrust_cpp_bridge::timsrust_cpp_bridge PROPERTIES
+    IMPORTED_LOCATION "${_TIMSRUST_PREFIX}/lib/@TIMSRUST_LIB_FILENAME@"
+    INTERFACE_INCLUDE_DIRECTORIES "${_TIMSRUST_PREFIX}/include"
+  )
+
+  # Platform-specific system link dependencies required by the Rust static library.
+  # These are validated empirically by CI smoke tests on each platform.
+  if(UNIX AND NOT APPLE)
+    set_property(TARGET timsrust_cpp_bridge::timsrust_cpp_bridge APPEND PROPERTY
+      INTERFACE_LINK_LIBRARIES pthread dl m)
+  elseif(APPLE)
+    set_property(TARGET timsrust_cpp_bridge::timsrust_cpp_bridge APPEND PROPERTY
+      INTERFACE_LINK_LIBRARIES "-framework Security" "-framework SystemConfiguration" "-framework CoreFoundation" resolv)
+  elseif(WIN32)
+    set_property(TARGET timsrust_cpp_bridge::timsrust_cpp_bridge APPEND PROPERTY
+      INTERFACE_LINK_LIBRARIES ws2_32 userenv bcrypt ntdll advapi32)
+  endif()
+endif()
+
+unset(_TIMSRUST_PREFIX)
