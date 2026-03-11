@@ -89,7 +89,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: cmd
         run: |
-          cl.exe /std:c++17 /EHsc /Fe:target\smoke_test.exe /I include examples\cpp_client.cpp target\release\timsrust_cpp_bridge.lib ws2_32.lib userenv.lib bcrypt.lib ntdll.lib advapi32.lib
+          cl.exe /std:c++17 /EHsc /MD /Fe:target\smoke_test.exe /I include examples\cpp_client.cpp target\release\timsrust_cpp_bridge.lib ws2_32.lib userenv.lib bcrypt.lib ntdll.lib advapi32.lib
           target\smoke_test.exe
           if errorlevel 2 exit /b %errorlevel%
 
