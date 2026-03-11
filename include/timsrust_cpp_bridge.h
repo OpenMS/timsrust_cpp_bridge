@@ -176,7 +176,7 @@ timsffi_status tims_get_frame(tims_dataset* handle, unsigned int index, tims_fra
  * with tims_free_frame_array(handle, frames, count). Invalid ms_level
  * returns an empty array with TIMSFFI_OK.
  */
-timsffi_status tims_get_frames_by_level(tims_dataset* handle, unsigned int ms_level, unsigned int* out_count, tims_frame** out_frames);
+timsffi_status tims_get_frames_by_level(tims_dataset* handle, uint8_t ms_level, unsigned int* out_count, tims_frame** out_frames);
 
 /* Free frames previously returned by tims_get_frames_by_level. Frees each
  * per-frame tof_indices/intensities/scan_offsets buffer and then the array.

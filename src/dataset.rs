@@ -55,17 +55,29 @@ impl Tof2MzConverter { fn convert(&self, value: f64) -> f64 { value } }
 impl Scan2ImConverter { fn convert(&self, value: f64) -> f64 { value } }
 
 pub struct TimsDataset {
+    /// Spectrum-level reader (DDA/DIA expanded spectra).
     pub(crate) reader: SpectrumReader,
+    /// Reusable buffer for spectrum m/z values (handle-owned).
     mz_buf: Vec<f32>,
+    /// Reusable buffer for spectrum intensity values (handle-owned).
     int_buf: Vec<f32>,
+    /// Reusable buffer for frame TOF indices (handle-owned, single-frame API).
     frame_tof_buf: Vec<u32>,
+    /// Reusable buffer for frame intensities (handle-owned, single-frame API).
     frame_int_buf: Vec<u32>,
+    /// Reusable buffer for frame scan offsets (handle-owned, single-frame API).
     frame_scan_offset_buf: Vec<u64>,
+    /// Raw frame reader for MS1/MS2 frame-level access.
     pub(crate) frame_reader: FrameReader,
+    /// TOF index → m/z converter, cached from MetadataReader at open time.
     pub(crate) mz_converter: Tof2MzConverter,
+    /// Scan index → ion mobility converter, cached from MetadataReader at open time.
     pub(crate) im_converter: Scan2ImConverter,
+    /// Precomputed DIA isolation windows (None if unavailable).
     swath_windows: Option<Vec<TimsFfiSwathWindow>>,
+    /// Last error message for this handle (per-handle error storage).
     pub(crate) last_error: Option<String>,
+    /// Sorted (rt_seconds, spectrum_index) pairs for fast RT lookup.
     rt_index: Vec<(f64, usize)>,
 }
 
@@ -316,9 +328,14 @@ impl TimsDataset {
 
         #[cfg(not(feature = "with_timsrust"))]
         {
-            out.index = index; out.rt_seconds = 0.0; out.ms_level = 0;
-            out.num_scans = 0; out.num_peaks = 0;
-            out.tof_indices = ptr::null(); out.intensities = ptr::null(); out.scan_offsets = ptr::null();
+            out.index = index;
+            out.rt_seconds = 0.0;
+            out.ms_level = 0;
+            out.num_scans = 0;
+            out.num_peaks = 0;
+            out.tof_indices = ptr::null();
+            out.intensities = ptr::null();
+            out.scan_offsets = ptr::null();
             Ok(())
         }
     }

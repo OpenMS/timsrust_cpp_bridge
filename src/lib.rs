@@ -442,7 +442,7 @@ pub extern "C" fn tims_get_frame(
 #[no_mangle]
 pub extern "C" fn tims_get_frames_by_level(
     handle: *mut tims_dataset,
-    ms_level: c_uint,
+    ms_level: u8,
     out_count: *mut c_uint,
     out_frames: *mut *mut TimsFfiFrame,
 ) -> TimsFfiStatus {
