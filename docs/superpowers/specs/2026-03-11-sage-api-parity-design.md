@@ -31,13 +31,16 @@ typedef struct tims_spectrum {
     // new
     uint32_t index;               // native spectrum index
     double   isolation_width;     // isolation window width (0.0 if N/A)
+    double   isolation_mz;        // isolation window center m/z (0.0 if N/A)
     uint8_t  charge;              // precursor charge (0 = unknown)
-    float    precursor_intensity; // precursor intensity (NaN = unknown)
-    uint32_t frame_index;         // precursor's frame index (0 if N/A)
+    double   precursor_intensity; // precursor intensity (NaN = unknown)
+    uint32_t frame_index;         // precursor's frame index (UINT32_MAX if N/A)
 } tims_spectrum;
 ```
 
-Sentinel values for optional fields: `0` for charge/frame_index, `NaN` for precursor_intensity, `0.0` for isolation_width. Keeps the struct flat and C-friendly.
+Sentinel values for optional fields: `0` for charge, `UINT32_MAX` for frame_index, `NaN` for precursor_intensity, `0.0` for isolation_width/isolation_mz. Keeps the struct flat and C-friendly.
+
+Note: `precursor.charge` is `Option<usize>` in timsrust — the `usize → u8` cast is safe since charge values are always small (1–6 in practice). `precursor.intensity` is `Option<f64>`, preserved as `double` to avoid precision loss.
 
 ### 2. Frame-Level Access
 
@@ -52,7 +55,8 @@ typedef struct tims_frame {
     uint32_t  num_peaks;      // total peaks (length of tof_indices & intensities)
     uint32_t *tof_indices;    // raw TOF indices, flat array
     uint32_t *intensities;    // raw intensities, flat array
-    uint64_t *scan_offsets;   // per-scan offsets into flat arrays (length: num_scans + 1)
+    uint64_t *scan_offsets;   // per-scan offsets into flat arrays
+                              // length: num_scans + 1 (to be verified against timsrust's convention)
 } tims_frame;
 ```
 
@@ -64,7 +68,7 @@ Raw indices are preserved (not converted to m/z) so callers can perform efficien
 ```c
 tims_status tims_get_frame(tims_dataset *ds, uint32_t index, tims_frame *out);
 ```
-Buffers are owned by the dataset handle, valid until the next frame operation on that handle.
+Buffers are owned by the dataset handle, valid until the next call to `tims_get_frame` on that handle. Frame and spectrum buffers are independent — calling `tims_get_spectrum` does not invalidate frame buffers and vice versa.
 
 **Batch filtered access (caller-owned, malloc'd):**
 ```c
@@ -76,11 +80,11 @@ tims_status tims_get_frames_by_level(
 );
 void tims_free_frame_array(tims_dataset *ds, tims_frame *frames, uint32_t count);
 ```
-Runs `FrameReader::parallel_filter()` on the Rust side — C++ callers get rayon parallelism for free.
+Runs `FrameReader::parallel_filter()` on the Rust side — C++ callers get rayon parallelism for free. Invalid `ms_level` values (anything other than 1 or 2) return an empty array with `out_count = 0` and `Ok` status.
 
 ### 3. Converters
 
-Methods on the dataset handle. `MetadataReader` is called at open time; `Tof2MzConverter` and `Scan2ImConverter` are cached inside `TimsDataset`.
+Methods on the dataset handle. `MetadataReader::new()` is called at open time, and the returned `Metadata`'s converters (`mz_converter`, `im_converter`) are cached inside `TimsDataset`.
 
 **Single-value conversion:**
 ```c
@@ -116,10 +120,15 @@ void         tims_config_free(tims_config *cfg);
 // SpectrumProcessingParams setters
 void tims_config_set_smoothing_window(tims_config *cfg, uint32_t window);
 void tims_config_set_centroiding_window(tims_config *cfg, uint32_t window);
+void tims_config_set_calibration_tolerance(tims_config *cfg, double tolerance);
+void tims_config_set_calibrate(tims_config *cfg, uint8_t enabled);
 
 // FrameWindowSplittingConfiguration setters
-// (exact setters TBD — will be finalized during implementation
-//  by inspecting timsrust 0.4.2's FrameWindowSplittingConfiguration fields)
+// (exact setters TBD — will be finalized during implementation by inspecting
+//  timsrust 0.4.2's FrameWindowSplittingConfiguration fields. Note: the
+//  UniformMobility variant takes an Option<Scan2ImConverter>, which may require
+//  opening the dataset first to obtain the converter — this chicken-and-egg
+//  constraint may limit which DIA splitting modes are configurable pre-open.)
 
 // Open with config (existing tims_open remains for default config)
 tims_status tims_open_with_config(
@@ -138,7 +147,8 @@ Current `tims_open()` is unchanged and continues to use timsrust defaults.
 - Add `frame_reader: FrameReader` — constructed at open time alongside `SpectrumReader`
 - Add `mz_converter: Tof2MzConverter` and `im_converter: Scan2ImConverter` — from `MetadataReader::new()` at open time
 - Add frame buffers: `tof_buf: Vec<u32>`, `int_buf_u32: Vec<u32>`, `scan_offset_buf: Vec<u64>` for single-frame handle-owned access
-- Populate new `TimsFfiSpectrum` fields in `get_spectrum()`
+- Populate new `TimsFfiSpectrum` fields in `get_spectrum()` and `tims_get_spectra_by_rt()`
+- `num_frames` field can be replaced by `frame_reader.len()`
 
 ### New file: `config.rs`
 
@@ -177,7 +187,7 @@ All new functions get stub implementations:
 | `tims_convert_scan_to_im` | Converter: single | Return value |
 | `tims_convert_tof_to_mz_array` | Converter: batch | Caller-provided buffer |
 | `tims_convert_scan_to_im_array` | Converter: batch | Caller-provided buffer |
-| `tims_config_create` | Config: lifecycle | Returns malloc'd |
+| `tims_config_create` | Config: lifecycle | Returns Box'd |
 | `tims_config_free` | Config: lifecycle | — |
 | `tims_config_set_*` | Config: setters | — |
 | `tims_open_with_config` | Config: open | — |
