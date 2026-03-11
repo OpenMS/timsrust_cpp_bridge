@@ -302,22 +302,38 @@ impl TimsDataset {
 
     pub fn get_frame(&mut self, index: u32, out: &mut TimsFfiFrame) -> Result<(), TimsFfiStatus> {
         let len = self.frame_reader.len() as u32;
-        if index >= len { return Err(TimsFfiStatus::IndexOutOfBounds); }
+        if index >= len {
+            self.last_error = Some(format!(
+                "frame index {} out of bounds (total {})", index, len
+            ));
+            return Err(TimsFfiStatus::IndexOutOfBounds);
+        }
 
         #[cfg(feature = "with_timsrust")]
         {
             let frame = self.frame_reader.get(index as usize)
-                .map_err(|_| TimsFfiStatus::IndexOutOfBounds)?;
+                .map_err(|e| {
+                    self.last_error = Some(format!("failed to read frame {}: {:?}", index, e));
+                    TimsFfiStatus::IndexOutOfBounds
+                })?;
             self.frame_tof_buf.clear();
             self.frame_tof_buf.extend_from_slice(&frame.tof_indices);
             self.frame_int_buf.clear();
             self.frame_int_buf.extend_from_slice(&frame.intensities);
             self.frame_scan_offset_buf.clear();
             self.frame_scan_offset_buf.extend(frame.scan_offsets.iter().map(|&s| s as u64));
-            let num_scans = if frame.scan_offsets.is_empty() { 0 } else { (frame.scan_offsets.len() - 1) as u32 };
+            let num_scans = if frame.scan_offsets.is_empty() {
+                0
+            } else {
+                (frame.scan_offsets.len() - 1) as u32
+            };
             out.index = frame.index as u32;
             out.rt_seconds = frame.rt_in_seconds;
-            out.ms_level = match frame.ms_level { timsrust::MSLevel::MS1 => 1, timsrust::MSLevel::MS2 => 2, _ => 0 };
+            out.ms_level = match frame.ms_level {
+                timsrust::MSLevel::MS1 => 1,
+                timsrust::MSLevel::MS2 => 2,
+                _ => 0,
+            };
             out.num_scans = num_scans;
             out.num_peaks = frame.tof_indices.len() as u32;
             out.tof_indices = if out.num_peaks == 0 { ptr::null() } else { self.frame_tof_buf.as_ptr() };
