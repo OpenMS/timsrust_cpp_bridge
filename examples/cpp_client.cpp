@@ -154,6 +154,58 @@ int main(int argc, char** argv) {
     std::cout << "  file_info scan: " << info_ms << " ms  (wall)\n";
     std::cout << "  (timsrust internal wall_ms: " << info.wall_ms << " ms)\n";
 
+    // ---- Frame-level access demo --------------------------------------------
+    std::cout << "\n-- Frame-level access --\n";
+    unsigned int total_frames = tims_num_frames(handle);
+    if (total_frames > 0) {
+        tims_frame frame{};
+        timsffi_status fs = tims_get_frame(handle, 0, &frame);
+        if (fs == TIMSFFI_OK) {
+            std::cout << "Frame 0: index=" << frame.index
+                      << "  rt=" << std::fixed << std::setprecision(2) << frame.rt_seconds << "s"
+                      << "  ms_level=" << (int)frame.ms_level
+                      << "  scans=" << frame.num_scans
+                      << "  peaks=" << frame.num_peaks << "\n";
+        }
+
+        // Batch: get all MS1 frames
+        tims_frame* ms1_frames = nullptr;
+        unsigned int ms1_count = 0;
+        auto t_ms1 = Clock::now();
+        tims_get_frames_by_level(handle, 1, &ms1_count, &ms1_frames);
+        double ms1_ms = elapsed_ms(t_ms1);
+        std::cout << "MS1 frames: " << ms1_count
+                  << "  (fetched in " << std::setprecision(1) << ms1_ms << " ms)\n";
+        if (ms1_frames) tims_free_frame_array(handle, ms1_frames, ms1_count);
+    }
+
+    // ---- Converter demo -----------------------------------------------------
+    std::cout << "\n-- Converters --\n";
+    double mz_example = tims_convert_tof_to_mz(handle, 100000);
+    double im_example = tims_convert_scan_to_im(handle, 500);
+    std::cout << "TOF 100000 -> m/z " << std::setprecision(4) << mz_example << "\n";
+    std::cout << "Scan 500   -> IM  " << std::setprecision(4) << im_example << "\n";
+
+    // ---- Extended spectrum fields demo --------------------------------------
+    std::cout << "\n-- Extended spectrum fields --\n";
+    if (tims_num_spectra(handle) > 0) {
+        tims_spectrum spec{};
+        if (tims_get_spectrum(handle, 0, &spec) == TIMSFFI_OK) {
+            std::cout << "Spectrum 0: index=" << spec.index
+                      << "  ms_level=" << (int)spec.ms_level
+                      << "  charge=" << (int)spec.charge
+                      << "  isolation_width=" << std::setprecision(2) << spec.isolation_width
+                      << "  isolation_mz=" << spec.isolation_mz
+                      << "  frame_index=" << spec.frame_index
+                      << "  precursor_intensity=";
+            if (std::isnan(spec.precursor_intensity))
+                std::cout << "N/A";
+            else
+                std::cout << std::setprecision(0) << spec.precursor_intensity;
+            std::cout << "\n";
+        }
+    }
+
     tims_close(handle);
     return 0;
 }

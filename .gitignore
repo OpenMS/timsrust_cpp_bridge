@@ -1,0 +1,9 @@
+# Build artifacts
+target/
+
+# Catch2 amalgamated files (download via tests_cpp/fetch_catch2.sh)
+tests_cpp/catch2/
+
+# Compiled test objects and binary
+tests_cpp/*.o
+tests_cpp/run_tests

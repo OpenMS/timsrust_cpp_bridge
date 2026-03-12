@@ -1,0 +1,77 @@
+name: Tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  stub-tests:
+    name: Stub Tests (no dataset)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo test (stub mode)
+        run: cargo test -- --nocapture
+
+      - name: Build library (debug)
+        run: cargo build
+
+      - name: Fetch Catch2
+        run: tests_cpp/fetch_catch2.sh
+
+      - name: C++ ABI tests
+        run: |
+          cd tests_cpp
+          make test LIBDIR=../target/debug
+
+  integration-tests:
+    name: Integration Tests (real data)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache test datasets
+        id: cache-testdata
+        uses: actions/cache@v4
+        with:
+          path: testdata
+          key: test-data-v1
+
+      - name: Download test datasets
+        if: steps.cache-testdata.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p testdata
+          gh release download test-data-v1 -D testdata
+          unzip testdata/DDA_HeLa_50ng_5_6min.d.zip -d testdata
+          unzip testdata/DIA_HeLa_50ng_5_6min.d.zip -d testdata
+          rm testdata/*.d.zip
+
+      - name: Build library (release, with timsrust)
+        run: cargo build --features with_timsrust --release
+
+      - name: Rust integration tests
+        env:
+          TIMSRUST_TEST_DATA_DDA: testdata/20210510_TIMS03_EVO03_PaSk_MA_HeLa_50ng_5_6min_DDA_S1-B1_1_25185.d
+          TIMSRUST_TEST_DATA_DIA: testdata/20210510_TIMS03_EVO03_PaSk_SA_HeLa_50ng_5_6min_DIA_high_speed_S1-B2_1_25186.d
+        run: cargo test --features with_timsrust -- --nocapture
+
+      - name: Fetch Catch2
+        run: tests_cpp/fetch_catch2.sh
+
+      - name: C++ smoke tests
+        run: |
+          cd tests_cpp
+          make test LIBDIR=../target/release \
+            DDA=../testdata/20210510_TIMS03_EVO03_PaSk_MA_HeLa_50ng_5_6min_DDA_S1-B1_1_25185.d \
+            DIA=../testdata/20210510_TIMS03_EVO03_PaSk_SA_HeLa_50ng_5_6min_DIA_high_speed_S1-B2_1_25186.d

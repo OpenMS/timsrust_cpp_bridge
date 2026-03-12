@@ -1,4 +1,4 @@
-/* include/timsffi.h */
+/* include/timsrust_cpp_bridge.h */
 
 #ifndef TIMSFFI_H
 #define TIMSFFI_H
@@ -27,6 +27,13 @@ typedef struct {
     const float* mz;
     const float* intensity;
     double   im;
+    /* Sage-parity fields */
+    uint32_t index;               /* spectrum index from SpectrumReader */
+    double   isolation_width;     /* isolation window width (0.0 if N/A) */
+    double   isolation_mz;        /* isolation window center m/z (0.0 if N/A) */
+    uint8_t  charge;              /* precursor charge (0 = unknown) */
+    double   precursor_intensity; /* precursor intensity (NaN = unknown) */
+    uint32_t frame_index;         /* precursor frame index (UINT32_MAX for MS1) */
 } tims_spectrum;
 
 typedef struct {
@@ -37,6 +44,17 @@ typedef struct {
     double im_upper;
     uint8_t is_ms1;
 } tims_swath_window;
+
+typedef struct {
+    uint32_t index;
+    double   rt_seconds;
+    uint8_t  ms_level;           /* 1=MS1, 2=MS2, 0=Unknown */
+    uint32_t num_scans;
+    uint32_t num_peaks;          /* total peaks (length of tof_indices & intensities) */
+    const uint32_t* tof_indices; /* raw TOF indices, flat array */
+    const uint32_t* intensities; /* raw intensities, flat array */
+    const uint64_t* scan_offsets;/* per-scan offsets (length: num_scans + 1) */
+} tims_frame;
 
 /* functions: tims_open, tims_close, tims_num_spectra, tims_get_spectrum, ... */
 /* Function prototypes (C ABI)
@@ -142,6 +160,70 @@ typedef struct {
  * num_frames for the raw LC frame count which includes MS1 frames).
  */
 timsffi_status tims_file_info(tims_dataset* handle, tims_file_info_t* out);
+
+/* -------------------------------------------------------------------------
+ * Frame-level access
+ * ------------------------------------------------------------------------- */
+
+/* Fill out a frame structure for the given index. Returns status code.
+ * Pointers in the output point to internal buffers owned by the handle;
+ * valid until the next call to tims_get_frame on the same handle or
+ * tims_close(). Frame and spectrum buffers are independent.
+ */
+timsffi_status tims_get_frame(tims_dataset* handle, unsigned int index, tims_frame* out_frame);
+
+/* Retrieve all frames at the given MS level (1 or 2). Returns an
+ * allocated array in *out_frames and sets *out_count. Caller must free
+ * with tims_free_frame_array(handle, frames, count). Invalid ms_level
+ * returns an empty array with TIMSFFI_OK.
+ */
+timsffi_status tims_get_frames_by_level(tims_dataset* handle, uint8_t ms_level, unsigned int* out_count, tims_frame** out_frames);
+
+/* Free frames previously returned by tims_get_frames_by_level. Frees each
+ * per-frame tof_indices/intensities/scan_offsets buffer and then the array.
+ */
+void tims_free_frame_array(tims_dataset* handle, tims_frame* frames, unsigned int count);
+
+/* -------------------------------------------------------------------------
+ * Index converters (TOF -> m/z, scan -> ion mobility)
+ * ------------------------------------------------------------------------- */
+
+/* Convert a single TOF index to m/z. Returns NaN if handle is NULL. */
+double tims_convert_tof_to_mz(const tims_dataset* handle, uint32_t tof_index);
+
+/* Convert a single scan index to ion mobility (1/K0). Returns NaN if handle is NULL. */
+double tims_convert_scan_to_im(const tims_dataset* handle, uint32_t scan_index);
+
+/* Batch convert TOF indices to m/z. Caller provides output buffer. */
+timsffi_status tims_convert_tof_to_mz_array(const tims_dataset* handle,
+                                             const uint32_t* tof_indices, uint32_t count,
+                                             double* out_mz);
+
+/* Batch convert scan indices to ion mobility. Caller provides output buffer. */
+timsffi_status tims_convert_scan_to_im_array(const tims_dataset* handle,
+                                              const uint32_t* scan_indices, uint32_t count,
+                                              double* out_im);
+
+/* -------------------------------------------------------------------------
+ * Opaque configuration for SpectrumReader construction
+ * ------------------------------------------------------------------------- */
+
+typedef struct tims_config tims_config;
+
+/* Create a new config with default values. Caller must free with tims_config_free. */
+tims_config *tims_config_create(void);
+
+/* Free a config created by tims_config_create. */
+void tims_config_free(tims_config *cfg);
+
+/* SpectrumProcessingParams setters */
+void tims_config_set_smoothing_window(tims_config *cfg, uint32_t window);
+void tims_config_set_centroiding_window(tims_config *cfg, uint32_t window);
+void tims_config_set_calibration_tolerance(tims_config *cfg, double tolerance);
+void tims_config_set_calibrate(tims_config *cfg, uint8_t enabled); /* 0=off, non-zero=on */
+
+/* Open dataset with custom config. Existing tims_open uses defaults. */
+timsffi_status tims_open_with_config(const char* path, const tims_config* cfg, tims_dataset** out);
 
 
 #ifdef __cplusplus

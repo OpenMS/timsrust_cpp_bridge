@@ -11,6 +11,13 @@ pub struct TimsFfiSpectrum {
     pub mz: *const c_float,
     pub intensity: *const c_float,
     pub im: c_double,
+    // New fields for Sage parity
+    pub index: c_uint,               // Spectrum.index from SpectrumReader
+    pub isolation_width: c_double,   // isolation window width (0.0 if N/A)
+    pub isolation_mz: c_double,      // isolation window center m/z (0.0 if N/A)
+    pub charge: c_uchar,             // precursor charge (0 = unknown)
+    pub precursor_intensity: c_double, // precursor intensity (f64::NAN = unknown)
+    pub frame_index: c_uint,         // precursor frame index (u32::MAX = N/A, i.e. MS1)
 }
 
 #[repr(C)]
@@ -91,5 +98,18 @@ pub struct TimsFfiFileInfo {
     pub ms1: TimsFfiLevelStats,
     pub ms2: TimsFfiLevelStats,
     pub wall_ms: c_double,       // wall time to collect stats (ms)
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct TimsFfiFrame {
+    pub index: c_uint,
+    pub rt_seconds: c_double,
+    pub ms_level: c_uchar,        // 1=MS1, 2=MS2, 0=Unknown
+    pub num_scans: c_uint,
+    pub num_peaks: c_uint,         // total peaks (length of tof_indices & intensities)
+    pub tof_indices: *const u32,   // raw TOF indices, flat array
+    pub intensities: *const u32,   // raw intensities, flat array
+    pub scan_offsets: *const u64,  // per-scan offsets (length: num_scans + 1)
 }
 

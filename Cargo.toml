@@ -7,7 +7,7 @@ description = "C FFI wrapper around timsrust for TDF/miniTDF access"
 
 [lib]
 # We want something C/C++ can link against
-crate-type = ["cdylib", "staticlib"]
+crate-type = ["cdylib", "staticlib", "lib"]
 
 [dependencies]
 # timsrust is optional for environments where the native crate is available.
@@ -25,4 +25,7 @@ with_timsrust = ["timsrust"]
 [build-dependencies]
 # only if you want auto header generation
 cbindgen = "0.27"
+
+[dev-dependencies]
+libc = "0.2"
 

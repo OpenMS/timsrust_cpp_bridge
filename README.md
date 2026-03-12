@@ -101,6 +101,55 @@ int main(int argc, char** argv) {
 }
 ```
 
+## Testing
+
+The project uses a two-tier testing strategy: **stub tests** (no data needed) and **integration tests** (real Bruker datasets).
+
+### Stub Tests
+
+Run the FFI contract tests against the lightweight stub build (no `timsrust` dependency, no datasets):
+
+```bash
+cargo test
+```
+
+C++ ABI layout tests (requires Catch2, fetched automatically):
+
+```bash
+cargo build
+tests_cpp/fetch_catch2.sh
+cd tests_cpp && make test LIBDIR=../target/debug
+```
+
+### Integration Tests (Real Data)
+
+Integration tests require real Bruker timsTOF Pro `.d` datasets. Test data is available as [GitHub release artifacts](https://github.com/OpenMS/timsrust_cpp_bridge/releases/tag/test-data-v1) (HeLa 50ng, 5.6-min gradient, from [PRIDE PXD027359](https://www.ebi.ac.uk/pride/archive/projects/PXD027359)).
+
+Download and extract the datasets, then point the env vars at them:
+
+```bash
+# Download and extract
+gh release download test-data-v1 -D testdata
+unzip testdata/DDA_HeLa_50ng_5_6min.d.zip -d testdata
+unzip testdata/DIA_HeLa_50ng_5_6min.d.zip -d testdata
+
+# Run Rust integration tests
+TIMSRUST_TEST_DATA_DDA=testdata/20210510_TIMS03_EVO03_PaSk_MA_HeLa_50ng_5_6min_DDA_S1-B1_1_25185.d \
+TIMSRUST_TEST_DATA_DIA=testdata/20210510_TIMS03_EVO03_PaSk_SA_HeLa_50ng_5_6min_DIA_high_speed_S1-B2_1_25186.d \
+cargo test --features with_timsrust -- --nocapture
+
+# Run C++ smoke tests (after building with --features with_timsrust --release)
+cd tests_cpp && make test LIBDIR=../target/release \
+  DDA=../testdata/20210510_TIMS03_EVO03_PaSk_MA_HeLa_50ng_5_6min_DDA_S1-B1_1_25185.d \
+  DIA=../testdata/20210510_TIMS03_EVO03_PaSk_SA_HeLa_50ng_5_6min_DIA_high_speed_S1-B2_1_25186.d
+```
+
+Tests gracefully skip if the env vars are unset.
+
+### CI
+
+Both test tiers run on every push and PR via GitHub Actions. Integration test datasets are cached to avoid repeated downloads.
+
 ## Notes and Caveats
 
 - For DIA-PASEF datasets, `tims_num_spectra` reflects expanded MS2 spectra, while `tims_num_frames` reflects raw LC frames (including MS1).
