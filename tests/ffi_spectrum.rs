@@ -3,15 +3,29 @@
 // Tests for tims_get_spectrum, tims_get_spectra_by_rt, and
 // tims_free_spectrum_array: null-handle guards, index-OOB on stub,
 // batch edge cases, and free safety.
+//
+// Tests that call open_stub() are gated to stub-only builds.
 
 mod common;
 use common::*;
 use std::ptr;
 
 // ============================================================
-// Single spectrum tests
+// Single spectrum tests — universal (no handle needed)
 // ============================================================
 
+#[test]
+fn get_spectrum_null_handle_returns_internal() {
+    let mut spec = std::mem::MaybeUninit::<TimsFfiSpectrum>::zeroed();
+    let status = unsafe { tims_get_spectrum(ptr::null_mut(), 0, spec.as_mut_ptr()) };
+    assert_status(status, TIMSFFI_ERR_INTERNAL);
+}
+
+// ============================================================
+// Single spectrum tests — stub-only
+// ============================================================
+
+#[cfg(not(feature = "with_timsrust"))]
 #[test]
 fn get_spectrum_index_0_stub_returns_oob() {
     let handle = open_stub();
@@ -21,13 +35,7 @@ fn get_spectrum_index_0_stub_returns_oob() {
     unsafe { tims_close(handle) };
 }
 
-#[test]
-fn get_spectrum_null_handle_returns_internal() {
-    let mut spec = std::mem::MaybeUninit::<TimsFfiSpectrum>::zeroed();
-    let status = unsafe { tims_get_spectrum(ptr::null_mut(), 0, spec.as_mut_ptr()) };
-    assert_status(status, TIMSFFI_ERR_INTERNAL);
-}
-
+#[cfg(not(feature = "with_timsrust"))]
 #[test]
 fn get_spectrum_null_out_returns_internal() {
     let handle = open_stub();
@@ -37,9 +45,24 @@ fn get_spectrum_null_out_returns_internal() {
 }
 
 // ============================================================
-// Batch spectrum tests
+// Batch spectrum tests — universal
 // ============================================================
 
+#[test]
+fn get_spectra_by_rt_null_handle_returns_internal() {
+    let mut count: u32 = 0;
+    let mut specs: *mut TimsFfiSpectrum = ptr::null_mut();
+    let status = unsafe {
+        tims_get_spectra_by_rt(ptr::null_mut(), 100.0, 5, 0.0, 2.0, &mut count, &mut specs)
+    };
+    assert_status(status, TIMSFFI_ERR_INTERNAL);
+}
+
+// ============================================================
+// Batch spectrum tests — stub-only
+// ============================================================
+
+#[cfg(not(feature = "with_timsrust"))]
 #[test]
 fn get_spectra_by_rt_stub_returns_empty() {
     let handle = open_stub();
@@ -54,16 +77,7 @@ fn get_spectra_by_rt_stub_returns_empty() {
     unsafe { tims_close(handle) };
 }
 
-#[test]
-fn get_spectra_by_rt_null_handle_returns_internal() {
-    let mut count: u32 = 0;
-    let mut specs: *mut TimsFfiSpectrum = ptr::null_mut();
-    let status = unsafe {
-        tims_get_spectra_by_rt(ptr::null_mut(), 100.0, 5, 0.0, 2.0, &mut count, &mut specs)
-    };
-    assert_status(status, TIMSFFI_ERR_INTERNAL);
-}
-
+#[cfg(not(feature = "with_timsrust"))]
 #[test]
 fn get_spectra_by_rt_n_zero_returns_empty() {
     let handle = open_stub();
@@ -77,6 +91,7 @@ fn get_spectra_by_rt_n_zero_returns_empty() {
     unsafe { tims_close(handle) };
 }
 
+#[cfg(not(feature = "with_timsrust"))]
 #[test]
 fn get_spectra_by_rt_negative_n_returns_empty() {
     let handle = open_stub();
@@ -91,9 +106,10 @@ fn get_spectra_by_rt_negative_n_returns_empty() {
 }
 
 // ============================================================
-// Free safety
+// Free safety — stub-only
 // ============================================================
 
+#[cfg(not(feature = "with_timsrust"))]
 #[test]
 fn free_spectrum_array_null_no_crash() {
     let handle = open_stub();
@@ -101,6 +117,7 @@ fn free_spectrum_array_null_no_crash() {
     unsafe { tims_close(handle) };
 }
 
+#[cfg(not(feature = "with_timsrust"))]
 #[test]
 fn free_spectrum_array_non_null_count_zero() {
     let handle = open_stub();

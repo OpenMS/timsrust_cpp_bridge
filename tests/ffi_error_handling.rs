@@ -2,11 +2,18 @@
 //
 // Tests for tims_get_last_error: global vs per-handle error retrieval,
 // null/zero-length buffer edge cases, truncation, and message content.
+//
+// Tests that read global error state (null handle) share a process-wide
+// Mutex to prevent races when the test runner executes in parallel.
 
 mod common;
 use common::*;
 use std::ffi::CString;
 use std::ptr;
+use std::sync::Mutex;
+
+/// Serialises tests that depend on the global LAST_ERROR state.
+static GLOBAL_ERROR_LOCK: Mutex<()> = Mutex::new(());
 
 // ============================================================
 // 1. Global error via null handle
@@ -14,6 +21,8 @@ use std::ptr;
 
 #[test]
 fn get_last_error_null_handle_reads_global() {
+    let _lock = GLOBAL_ERROR_LOCK.lock().unwrap();
+
     // Trigger a global error by opening a nonexistent path.
     let bad = CString::new("/tmp/timsrust_ffi_test_does_not_exist_err1").unwrap();
     let mut handle: *mut libc::c_void = ptr::null_mut();
@@ -31,9 +40,10 @@ fn get_last_error_null_handle_reads_global() {
 }
 
 // ============================================================
-// 2. Per-handle error via valid handle
+// 2. Per-handle error via valid handle (stub-only)
 // ============================================================
 
+#[cfg(not(feature = "with_timsrust"))]
 #[test]
 fn get_last_error_with_valid_handle_reads_per_handle() {
     let handle = open_stub();
@@ -83,6 +93,8 @@ fn get_last_error_zero_length_buffer_returns_internal() {
 
 #[test]
 fn get_last_error_truncation() {
+    let _lock = GLOBAL_ERROR_LOCK.lock().unwrap();
+
     // Trigger a global error (message will be longer than 4 chars).
     let bad = CString::new("/tmp/timsrust_ffi_test_does_not_exist_err5").unwrap();
     let mut handle: *mut libc::c_void = ptr::null_mut();
@@ -102,11 +114,14 @@ fn get_last_error_truncation() {
 }
 
 // ============================================================
-// 6. After successful open, global error is cleared
+// 6. After successful open, global error is cleared (stub-only)
 // ============================================================
 
+#[cfg(not(feature = "with_timsrust"))]
 #[test]
 fn get_last_error_after_success_is_empty() {
+    let _lock = GLOBAL_ERROR_LOCK.lock().unwrap();
+
     // open_stub() succeeds, which clears the global error.
     let handle = open_stub();
 
@@ -128,6 +143,8 @@ fn get_last_error_after_success_is_empty() {
 
 #[test]
 fn error_message_content_meaningful() {
+    let _lock = GLOBAL_ERROR_LOCK.lock().unwrap();
+
     let bad = CString::new("/tmp/timsrust_ffi_test_does_not_exist_err7").unwrap();
     let mut handle: *mut libc::c_void = ptr::null_mut();
     let status = unsafe { tims_open(bad.as_ptr(), &mut handle) };

@@ -166,6 +166,10 @@ pub struct TimsFfiFrame {
 }
 
 // ---- Status codes (must match TimsFfiStatus enum in src/types.rs) ----
+// Note: We use i32 constants rather than a Rust enum because the FFI
+// functions are declared with `-> i32` to match the C ABI (the C enum
+// `timsffi_status` is transmitted as a plain `int`).  This mirrors how
+// a real C/C++ consumer would interpret the return values.
 
 pub const TIMSFFI_OK: i32 = 0;
 pub const TIMSFFI_ERR_INVALID_UTF8: i32 = 1;

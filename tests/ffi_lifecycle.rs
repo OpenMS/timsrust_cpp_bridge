@@ -1,6 +1,8 @@
 // tests/ffi_lifecycle.rs
 //
 // Lifecycle tests: tims_open / tims_close, open_with_config, config builder.
+// Tests that call open_stub() are gated to stub-only builds because the
+// real timsrust reader cannot open a fake temp directory.
 
 mod common;
 use common::*;
@@ -8,7 +10,7 @@ use std::ffi::CString;
 use std::ptr;
 
 // ============================================================
-// tims_open / tims_close tests
+// tims_open / tims_close tests (universal — no handle needed)
 // ============================================================
 
 #[test]
@@ -34,17 +36,23 @@ fn open_nonexistent_path_returns_open_failed() {
 }
 
 #[test]
+fn close_null_handle_no_crash() {
+    unsafe { tims_close(ptr::null_mut()) };
+}
+
+// ============================================================
+// tims_open / tims_close tests (stub-only — needs fake path)
+// ============================================================
+
+#[cfg(not(feature = "with_timsrust"))]
+#[test]
 fn open_valid_stub_succeeds() {
     let handle = open_stub();
     assert!(!handle.is_null());
     unsafe { tims_close(handle) };
 }
 
-#[test]
-fn close_null_handle_no_crash() {
-    unsafe { tims_close(ptr::null_mut()) };
-}
-
+#[cfg(not(feature = "with_timsrust"))]
 #[test]
 fn close_valid_handle_no_crash() {
     let handle = open_stub();
@@ -52,7 +60,7 @@ fn close_valid_handle_no_crash() {
 }
 
 // ============================================================
-// open_with_config error paths
+// open_with_config error paths (universal — expect failure)
 // ============================================================
 
 #[test]
@@ -95,9 +103,10 @@ fn open_with_config_nonexistent_path_returns_open_failed() {
 }
 
 // ============================================================
-// open_with_config happy path
+// open_with_config happy path (stub-only)
 // ============================================================
 
+#[cfg(not(feature = "with_timsrust"))]
 #[test]
 fn open_with_config_happy_path() {
     let dir = std::env::temp_dir().join("timsrust_ffi_test_config_happy");
@@ -117,7 +126,7 @@ fn open_with_config_happy_path() {
 }
 
 // ============================================================
-// Config builder
+// Config builder (universal — no dataset needed)
 // ============================================================
 
 #[test]
@@ -149,6 +158,11 @@ fn config_setters_null_no_crash() {
     }
 }
 
+// ============================================================
+// Config builder full lifecycle (stub-only — opens fake path)
+// ============================================================
+
+#[cfg(not(feature = "with_timsrust"))]
 #[test]
 fn config_builder_full_lifecycle() {
     let cfg = unsafe { tims_config_create() };

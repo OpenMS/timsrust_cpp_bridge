@@ -3,15 +3,29 @@
 // Tests for tims_get_frame, tims_get_frames_by_level, and
 // tims_free_frame_array: null-handle guards, index-OOB on stub,
 // batch edge cases, and free safety.
+//
+// Tests that call open_stub() are gated to stub-only builds.
 
 mod common;
 use common::*;
 use std::ptr;
 
 // ============================================================
-// Single frame tests
+// Single frame tests — universal
 // ============================================================
 
+#[test]
+fn get_frame_null_handle_returns_internal() {
+    let mut frame = std::mem::MaybeUninit::<TimsFfiFrame>::zeroed();
+    let status = unsafe { tims_get_frame(ptr::null_mut(), 0, frame.as_mut_ptr()) };
+    assert_status(status, TIMSFFI_ERR_INTERNAL);
+}
+
+// ============================================================
+// Single frame tests — stub-only
+// ============================================================
+
+#[cfg(not(feature = "with_timsrust"))]
 #[test]
 fn get_frame_index_0_stub_returns_oob() {
     let handle = open_stub();
@@ -21,13 +35,7 @@ fn get_frame_index_0_stub_returns_oob() {
     unsafe { tims_close(handle) };
 }
 
-#[test]
-fn get_frame_null_handle_returns_internal() {
-    let mut frame = std::mem::MaybeUninit::<TimsFfiFrame>::zeroed();
-    let status = unsafe { tims_get_frame(ptr::null_mut(), 0, frame.as_mut_ptr()) };
-    assert_status(status, TIMSFFI_ERR_INTERNAL);
-}
-
+#[cfg(not(feature = "with_timsrust"))]
 #[test]
 fn get_frame_null_out_returns_internal() {
     let handle = open_stub();
@@ -37,9 +45,22 @@ fn get_frame_null_out_returns_internal() {
 }
 
 // ============================================================
-// Batch frame tests
+// Batch frame tests — universal
 // ============================================================
 
+#[test]
+fn get_frames_by_level_null_handle_returns_internal() {
+    let mut count: u32 = 0;
+    let mut frames: *mut TimsFfiFrame = ptr::null_mut();
+    let status = unsafe { tims_get_frames_by_level(ptr::null_mut(), 1, &mut count, &mut frames) };
+    assert_status(status, TIMSFFI_ERR_INTERNAL);
+}
+
+// ============================================================
+// Batch frame tests — stub-only
+// ============================================================
+
+#[cfg(not(feature = "with_timsrust"))]
 #[test]
 fn get_frames_by_level_stub_returns_empty() {
     let handle = open_stub();
@@ -52,18 +73,11 @@ fn get_frames_by_level_stub_returns_empty() {
     unsafe { tims_close(handle) };
 }
 
-#[test]
-fn get_frames_by_level_null_handle_returns_internal() {
-    let mut count: u32 = 0;
-    let mut frames: *mut TimsFfiFrame = ptr::null_mut();
-    let status = unsafe { tims_get_frames_by_level(ptr::null_mut(), 1, &mut count, &mut frames) };
-    assert_status(status, TIMSFFI_ERR_INTERNAL);
-}
-
 // ============================================================
-// Free safety
+// Free safety — stub-only
 // ============================================================
 
+#[cfg(not(feature = "with_timsrust"))]
 #[test]
 fn free_frame_array_null_no_crash() {
     let handle = open_stub();
@@ -71,6 +85,7 @@ fn free_frame_array_null_no_crash() {
     unsafe { tims_close(handle) };
 }
 
+#[cfg(not(feature = "with_timsrust"))]
 #[test]
 fn free_frame_array_non_null_count_zero() {
     let handle = open_stub();

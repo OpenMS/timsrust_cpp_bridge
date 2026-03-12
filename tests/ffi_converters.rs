@@ -3,13 +3,15 @@
 // Tests for scalar and array index converters:
 // tims_convert_tof_to_mz, tims_convert_scan_to_im,
 // tims_convert_tof_to_mz_array, tims_convert_scan_to_im_array.
+//
+// Tests that call open_stub() are gated to stub-only builds.
 
 mod common;
 use common::*;
 use std::ptr;
 
 // ============================================================
-// Scalar converters — null handle
+// Scalar converters — null handle (universal)
 // ============================================================
 
 #[test]
@@ -47,7 +49,7 @@ fn scan_to_im_stub_returns_identity() {
 }
 
 // ============================================================
-// tims_convert_tof_to_mz_array — null checks
+// tims_convert_tof_to_mz_array — null checks (universal)
 // ============================================================
 
 #[test]
@@ -60,6 +62,11 @@ fn tof_to_mz_array_null_handle_returns_internal() {
     assert_status(status, TIMSFFI_ERR_INTERNAL);
 }
 
+// ============================================================
+// tims_convert_tof_to_mz_array — stub-only
+// ============================================================
+
+#[cfg(not(feature = "with_timsrust"))]
 #[test]
 fn tof_to_mz_array_null_input_returns_internal() {
     let handle = open_stub();
@@ -71,6 +78,7 @@ fn tof_to_mz_array_null_input_returns_internal() {
     unsafe { tims_close(handle) };
 }
 
+#[cfg(not(feature = "with_timsrust"))]
 #[test]
 fn tof_to_mz_array_null_output_returns_internal() {
     let handle = open_stub();
@@ -82,6 +90,7 @@ fn tof_to_mz_array_null_output_returns_internal() {
     unsafe { tims_close(handle) };
 }
 
+#[cfg(not(feature = "with_timsrust"))]
 #[test]
 fn tof_to_mz_array_count_zero_returns_ok() {
     let handle = open_stub();
@@ -95,6 +104,7 @@ fn tof_to_mz_array_count_zero_returns_ok() {
     unsafe { tims_close(handle) };
 }
 
+#[cfg(not(feature = "with_timsrust"))]
 #[test]
 fn tof_to_mz_array_stub_matches_scalar() {
     let handle = open_stub();
@@ -124,7 +134,7 @@ fn tof_to_mz_array_stub_matches_scalar() {
 }
 
 // ============================================================
-// tims_convert_scan_to_im_array — null checks
+// tims_convert_scan_to_im_array — null checks (universal)
 // ============================================================
 
 #[test]
@@ -137,6 +147,11 @@ fn scan_to_im_array_null_handle_returns_internal() {
     assert_status(status, TIMSFFI_ERR_INTERNAL);
 }
 
+// ============================================================
+// tims_convert_scan_to_im_array — stub-only
+// ============================================================
+
+#[cfg(not(feature = "with_timsrust"))]
 #[test]
 fn scan_to_im_array_null_input_returns_internal() {
     let handle = open_stub();
@@ -148,6 +163,7 @@ fn scan_to_im_array_null_input_returns_internal() {
     unsafe { tims_close(handle) };
 }
 
+#[cfg(not(feature = "with_timsrust"))]
 #[test]
 fn scan_to_im_array_null_output_returns_internal() {
     let handle = open_stub();
@@ -159,6 +175,7 @@ fn scan_to_im_array_null_output_returns_internal() {
     unsafe { tims_close(handle) };
 }
 
+#[cfg(not(feature = "with_timsrust"))]
 #[test]
 fn scan_to_im_array_count_zero_returns_ok() {
     let handle = open_stub();
@@ -172,6 +189,7 @@ fn scan_to_im_array_count_zero_returns_ok() {
     unsafe { tims_close(handle) };
 }
 
+#[cfg(not(feature = "with_timsrust"))]
 #[test]
 fn scan_to_im_array_stub_matches_scalar() {
     let handle = open_stub();
