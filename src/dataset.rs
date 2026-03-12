@@ -50,9 +50,9 @@ struct Tof2MzConverter;
 #[cfg(not(feature = "with_timsrust"))]
 struct Scan2ImConverter;
 #[cfg(not(feature = "with_timsrust"))]
-impl Tof2MzConverter { fn convert(&self, value: f64) -> f64 { value } }
+impl Tof2MzConverter { pub fn convert(&self, value: f64) -> f64 { value } }
 #[cfg(not(feature = "with_timsrust"))]
-impl Scan2ImConverter { fn convert(&self, value: f64) -> f64 { value } }
+impl Scan2ImConverter { pub fn convert(&self, value: f64) -> f64 { value } }
 
 pub struct TimsDataset {
     /// Spectrum-level reader (DDA/DIA expanded spectra).

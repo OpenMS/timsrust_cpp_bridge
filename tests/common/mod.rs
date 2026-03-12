@@ -2,8 +2,13 @@
 //
 // Shared helpers for FFI integration tests.
 // Uses extern "C" declarations to test the actual C ABI surface.
+//
+// The `extern crate` forces the linker to include the library's
+// #[no_mangle] symbols so that our extern "C" declarations resolve.
 
 #![allow(dead_code)]
+
+extern crate timsrust_cpp_bridge;
 
 use std::ffi::CString;
 use std::ptr;
