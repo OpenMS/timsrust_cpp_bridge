@@ -463,6 +463,7 @@ pub extern "C" fn tims_get_frames_by_level(
             2 => ds.frame_reader.get_all_ms2(),
             _ => {
                 // Invalid ms_level: return empty Ok
+                ds.last_error = None;
                 unsafe { *out_count = 0; *out_frames = std::ptr::null_mut(); }
                 return TimsFfiStatus::Ok;
             }
@@ -479,12 +480,17 @@ pub extern "C" fn tims_get_frames_by_level(
 
         let n = frames.len();
         if n == 0 {
+            ds.last_error = None;
             unsafe { *out_count = 0; *out_frames = std::ptr::null_mut(); }
             return TimsFfiStatus::Ok;
         }
 
         // Allocate the outer array of TimsFfiFrame via malloc
-        let arr_ptr = unsafe { malloc(n * mem::size_of::<TimsFfiFrame>()) } as *mut TimsFfiFrame;
+        let arr_size = match n.checked_mul(mem::size_of::<TimsFfiFrame>()) {
+            Some(s) => s,
+            None => return TimsFfiStatus::Internal,
+        };
+        let arr_ptr = unsafe { malloc(arr_size) } as *mut TimsFfiFrame;
         if arr_ptr.is_null() { return TimsFfiStatus::Internal; }
 
         for (idx, frame) in frames.iter().enumerate() {
@@ -493,7 +499,22 @@ pub extern "C" fn tims_get_frames_by_level(
 
             // Allocate per-frame tof_indices
             let tof_ptr = if num_peaks == 0 { std::ptr::null_mut() } else {
-                let p = unsafe { malloc(num_peaks * mem::size_of::<u32>()) } as *mut u32;
+                let alloc_size = match num_peaks.checked_mul(mem::size_of::<u32>()) {
+                    Some(s) => s,
+                    None => {
+                        for j in 0..idx {
+                            unsafe {
+                                let old = arr_ptr.add(j).read();
+                                if !old.tof_indices.is_null() { free(old.tof_indices as *mut libc::c_void); }
+                                if !old.intensities.is_null() { free(old.intensities as *mut libc::c_void); }
+                                if !old.scan_offsets.is_null() { free(old.scan_offsets as *mut libc::c_void); }
+                            }
+                        }
+                        unsafe { free(arr_ptr as *mut libc::c_void); }
+                        return TimsFfiStatus::Internal;
+                    }
+                };
+                let p = unsafe { malloc(alloc_size) } as *mut u32;
                 if p.is_null() {
                     // Free previously allocated frames
                     for j in 0..idx {
@@ -513,7 +534,23 @@ pub extern "C" fn tims_get_frames_by_level(
 
             // Allocate per-frame intensities
             let int_ptr = if num_peaks == 0 { std::ptr::null_mut() } else {
-                let p = unsafe { malloc(num_peaks * mem::size_of::<u32>()) } as *mut u32;
+                let alloc_size = match num_peaks.checked_mul(mem::size_of::<u32>()) {
+                    Some(s) => s,
+                    None => {
+                        if !tof_ptr.is_null() { unsafe { free(tof_ptr as *mut libc::c_void); } }
+                        for j in 0..idx {
+                            unsafe {
+                                let old = arr_ptr.add(j).read();
+                                if !old.tof_indices.is_null() { free(old.tof_indices as *mut libc::c_void); }
+                                if !old.intensities.is_null() { free(old.intensities as *mut libc::c_void); }
+                                if !old.scan_offsets.is_null() { free(old.scan_offsets as *mut libc::c_void); }
+                            }
+                        }
+                        unsafe { free(arr_ptr as *mut libc::c_void); }
+                        return TimsFfiStatus::Internal;
+                    }
+                };
+                let p = unsafe { malloc(alloc_size) } as *mut u32;
                 if p.is_null() {
                     if !tof_ptr.is_null() { unsafe { free(tof_ptr as *mut libc::c_void); } }
                     for j in 0..idx {
@@ -534,7 +571,24 @@ pub extern "C" fn tims_get_frames_by_level(
             // Allocate per-frame scan_offsets (length: num_scans + 1)
             let scan_ptr = if num_scans == 0 { std::ptr::null_mut() } else {
                 let scan_len = num_scans + 1;
-                let p = unsafe { malloc(scan_len * mem::size_of::<u64>()) } as *mut u64;
+                let alloc_size = match scan_len.checked_mul(mem::size_of::<u64>()) {
+                    Some(s) => s,
+                    None => {
+                        if !tof_ptr.is_null() { unsafe { free(tof_ptr as *mut libc::c_void); } }
+                        if !int_ptr.is_null() { unsafe { free(int_ptr as *mut libc::c_void); } }
+                        for j in 0..idx {
+                            unsafe {
+                                let old = arr_ptr.add(j).read();
+                                if !old.tof_indices.is_null() { free(old.tof_indices as *mut libc::c_void); }
+                                if !old.intensities.is_null() { free(old.intensities as *mut libc::c_void); }
+                                if !old.scan_offsets.is_null() { free(old.scan_offsets as *mut libc::c_void); }
+                            }
+                        }
+                        unsafe { free(arr_ptr as *mut libc::c_void); }
+                        return TimsFfiStatus::Internal;
+                    }
+                };
+                let p = unsafe { malloc(alloc_size) } as *mut u64;
                 if p.is_null() {
                     if !tof_ptr.is_null() { unsafe { free(tof_ptr as *mut libc::c_void); } }
                     if !int_ptr.is_null() { unsafe { free(int_ptr as *mut libc::c_void); } }
@@ -572,12 +626,14 @@ pub extern "C" fn tims_get_frames_by_level(
             unsafe { arr_ptr.add(idx).write(out_frame); }
         }
 
+        ds.last_error = None;
         unsafe { *out_count = n as c_uint; *out_frames = arr_ptr; }
         TimsFfiStatus::Ok
     }
 
     #[cfg(not(feature = "with_timsrust"))]
     {
+        ds.last_error = None;
         unsafe { *out_count = 0; *out_frames = std::ptr::null_mut(); }
         TimsFfiStatus::Ok
     }

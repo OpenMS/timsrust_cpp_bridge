@@ -340,7 +340,7 @@ impl TimsDataset {
             let frame = self.frame_reader.get(index as usize)
                 .map_err(|e| {
                     self.last_error = Some(format!("failed to read frame {}: {:?}", index, e));
-                    TimsFfiStatus::IndexOutOfBounds
+                    TimsFfiStatus::Internal
                 })?;
             self.frame_tof_buf.clear();
             self.frame_tof_buf.extend_from_slice(&frame.tof_indices);
@@ -365,6 +365,7 @@ impl TimsDataset {
             out.tof_indices = if out.num_peaks == 0 { ptr::null() } else { self.frame_tof_buf.as_ptr() };
             out.intensities = if out.num_peaks == 0 { ptr::null() } else { self.frame_int_buf.as_ptr() };
             out.scan_offsets = if num_scans == 0 { ptr::null() } else { self.frame_scan_offset_buf.as_ptr() };
+            self.last_error = None;
             return Ok(());
         }
 
@@ -378,6 +379,7 @@ impl TimsDataset {
             out.tof_indices = ptr::null();
             out.intensities = ptr::null();
             out.scan_offsets = ptr::null();
+            self.last_error = None;
             Ok(())
         }
     }
