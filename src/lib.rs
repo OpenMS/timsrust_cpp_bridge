@@ -1,7 +1,7 @@
 // src/lib.rs
-mod config;
-mod dataset;
-mod types;
+pub mod config;
+pub mod dataset;
+pub mod types;
 
 use crate::config::TimsFfiConfig;
 use crate::dataset::TimsDataset;
