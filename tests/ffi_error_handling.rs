@@ -30,11 +30,11 @@ fn get_last_error_null_handle_reads_global() {
     assert_status(status, TIMSFFI_ERR_OPEN_FAILED);
 
     // Read the global error (null handle → global).
-    let mut buf = [0i8; 256];
+    let mut buf = [0 as libc::c_char; 256];
     let st = unsafe { tims_get_last_error(ptr::null_mut(), buf.as_mut_ptr(), buf.len() as u32) };
     assert_status(st, TIMSFFI_OK);
 
-    let msg = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) };
+    let msg = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr() as *const _) };
     let msg_str = msg.to_str().expect("valid utf-8");
     assert!(!msg_str.is_empty(), "global error message should be non-empty");
 }
@@ -55,11 +55,11 @@ fn get_last_error_with_valid_handle_reads_per_handle() {
     assert_status(status, TIMSFFI_ERR_INDEX_OOB);
 
     // Read per-handle error.
-    let mut buf = [0i8; 256];
+    let mut buf = [0 as libc::c_char; 256];
     let st = unsafe { tims_get_last_error(handle, buf.as_mut_ptr(), buf.len() as u32) };
     assert_status(st, TIMSFFI_OK);
 
-    let msg = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) };
+    let msg = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr() as *const _) };
     let msg_str = msg.to_str().expect("valid utf-8");
     assert!(!msg_str.is_empty(), "per-handle error message should be non-empty");
 
@@ -82,7 +82,7 @@ fn get_last_error_null_buffer_returns_internal() {
 
 #[test]
 fn get_last_error_zero_length_buffer_returns_internal() {
-    let mut buf = [0i8; 1];
+    let mut buf = [0 as libc::c_char; 1];
     let st = unsafe { tims_get_last_error(ptr::null_mut(), buf.as_mut_ptr(), 0) };
     assert_status(st, TIMSFFI_ERR_INTERNAL);
 }
@@ -102,11 +102,11 @@ fn get_last_error_truncation() {
     assert_status(status, TIMSFFI_ERR_OPEN_FAILED);
 
     // Read into a 5-byte buffer → 4 chars + null terminator.
-    let mut buf = [0i8; 5];
+    let mut buf = [0 as libc::c_char; 5];
     let st = unsafe { tims_get_last_error(ptr::null_mut(), buf.as_mut_ptr(), 5) };
     assert_status(st, TIMSFFI_OK);
 
-    let msg = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) };
+    let msg = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr() as *const _) };
     let msg_str = msg.to_str().expect("valid utf-8");
     assert_eq!(msg_str.len(), 4, "truncated message should be exactly 4 chars, got '{}'", msg_str);
     // Ensure the null terminator is in the right place.
@@ -126,11 +126,11 @@ fn get_last_error_after_success_is_empty() {
     let handle = open_stub();
 
     // Read global error (null handle).
-    let mut buf = [0i8; 256];
+    let mut buf = [0 as libc::c_char; 256];
     let st = unsafe { tims_get_last_error(ptr::null_mut(), buf.as_mut_ptr(), buf.len() as u32) };
     assert_status(st, TIMSFFI_OK);
 
-    let msg = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) };
+    let msg = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr() as *const _) };
     let msg_str = msg.to_str().expect("valid utf-8");
     assert!(msg_str.is_empty(), "global error should be empty after successful open, got '{}'", msg_str);
 
@@ -150,11 +150,11 @@ fn error_message_content_meaningful() {
     let status = unsafe { tims_open(bad.as_ptr(), &mut handle) };
     assert_status(status, TIMSFFI_ERR_OPEN_FAILED);
 
-    let mut buf = [0i8; 512];
+    let mut buf = [0 as libc::c_char; 512];
     let st = unsafe { tims_get_last_error(ptr::null_mut(), buf.as_mut_ptr(), buf.len() as u32) };
     assert_status(st, TIMSFFI_OK);
 
-    let msg = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) };
+    let msg = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr() as *const _) };
     let msg_str = msg.to_str().expect("valid utf-8").to_lowercase();
     let has_keyword = msg_str.contains("path")
         || msg_str.contains("not found")
