@@ -1,0 +1,69 @@
+name: Tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  stub-tests:
+    name: Stub Tests (no dataset)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo test (stub mode)
+        run: cargo test -- --nocapture
+
+      - name: Build library (debug)
+        run: cargo build
+
+      - name: Fetch Catch2
+        run: tests_cpp/fetch_catch2.sh
+
+      - name: C++ ABI tests
+        run: |
+          cd tests_cpp
+          make test LIBDIR=../target/debug
+
+  integration-tests:
+    name: Integration Tests (real data)
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/master' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Download test datasets
+        run: |
+          mkdir -p testdata
+          # TODO: Update with real dataset download commands when filenames are known
+          # gh release download v0.1.0-testdata -p "*.d.tar.gz" -D testdata
+          # tar -xzf testdata/dda.d.tar.gz -C testdata
+          # tar -xzf testdata/dia.d.tar.gz -C testdata
+          echo "WARNING: Dataset download not yet configured"
+
+      - name: Build library (release, with timsrust)
+        run: cargo build --features with_timsrust --release
+
+      - name: Rust integration tests
+        env:
+          TIMSRUST_TEST_DATA_DDA: testdata/dda.d
+          TIMSRUST_TEST_DATA_DIA: testdata/dia.d
+        run: cargo test --features with_timsrust -- --nocapture
+
+      - name: Fetch Catch2
+        run: tests_cpp/fetch_catch2.sh
+
+      - name: C++ smoke tests
+        run: |
+          cd tests_cpp
+          make test LIBDIR=../target/release \
+            DDA=../testdata/dda.d \
+            DIA=../testdata/dia.d
