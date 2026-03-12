@@ -33,14 +33,21 @@ jobs:
   integration-tests:
     name: Integration Tests (real data)
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/master' || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache test datasets
+        id: cache-testdata
+        uses: actions/cache@v4
+        with:
+          path: testdata
+          key: test-data-v1
+
       - name: Download test datasets
+        if: steps.cache-testdata.outputs.cache-hit != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -48,6 +55,7 @@ jobs:
           gh release download test-data-v1 -D testdata
           unzip testdata/DDA_HeLa_50ng_5_6min.d.zip -d testdata
           unzip testdata/DIA_HeLa_50ng_5_6min.d.zip -d testdata
+          rm testdata/*.d.zip
 
       - name: Build library (release, with timsrust)
         run: cargo build --features with_timsrust --release
