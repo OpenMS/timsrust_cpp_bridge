@@ -20,7 +20,7 @@ use timsrust::readers::FrameReader;
 use timsrust::converters::{Tof2MzConverter, Scan2ImConverter};
 
 #[cfg(not(feature = "with_timsrust"))]
-struct SpectrumReader {
+pub(crate) struct SpectrumReader {
     // minimal stub keeps a length (0) to allow basic API tests
     n: usize,
 }
@@ -37,7 +37,7 @@ impl SpectrumReader {
 }
 
 #[cfg(not(feature = "with_timsrust"))]
-struct FrameReader { n: usize }
+pub(crate) struct FrameReader { n: usize }
 
 #[cfg(not(feature = "with_timsrust"))]
 impl FrameReader {
@@ -46,9 +46,9 @@ impl FrameReader {
 }
 
 #[cfg(not(feature = "with_timsrust"))]
-struct Tof2MzConverter;
+pub(crate) struct Tof2MzConverter;
 #[cfg(not(feature = "with_timsrust"))]
-struct Scan2ImConverter;
+pub(crate) struct Scan2ImConverter;
 #[cfg(not(feature = "with_timsrust"))]
 impl Tof2MzConverter { pub fn convert(&self, value: f64) -> f64 { value } }
 #[cfg(not(feature = "with_timsrust"))]
