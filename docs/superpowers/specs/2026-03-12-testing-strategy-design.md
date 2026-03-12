@@ -42,16 +42,25 @@ tests_cpp/
 
 All tests run against the stub build (no `with_timsrust` feature). No datasets required.
 
+Note: The stub build has 0 spectra and 0 frames, so any index (including 0) is out of bounds. Tests that need valid spectrum/frame access are in the real-data section.
+
 ### Lifecycle (`ffi_lifecycle.rs`)
 
-- open with null path -> returns `INVALID_UTF8`, handle is null
+- open with null path -> returns `INTERNAL` (null pointer check), handle unchanged
+- open with null out_handle -> returns `INTERNAL`
 - open with nonexistent path -> returns `OPEN_FAILED`
-- open with valid stub -> returns `OK`, handle is non-null
+- open with valid stub path -> returns `OK`, handle is non-null
 - close null handle -> no crash (null-safe)
-- close valid handle -> no crash, no double-free
-- config builder lifecycle -> create config, set all 4 fields, open_with_config, close config, close handle
-- config create returns non-null
+- close valid handle -> no crash (single close; double-close is UB and not tested)
+- open_with_config with null path -> returns `INTERNAL`
+- open_with_config with null config -> returns `INTERNAL`
+- open_with_config with null out_handle -> returns `INTERNAL`
+- open_with_config with nonexistent path -> returns `OPEN_FAILED`
+- open_with_config happy path -> returns `OK`, handle is non-null
+- config create -> returns non-null
 - config free null -> no crash
+- config free valid -> no crash
+- config setter null-safety -> calling each of the 4 setters with null config does not crash
 
 ### Error Handling (`ffi_error_handling.rs`)
 
@@ -65,48 +74,57 @@ All tests run against the stub build (no `with_timsrust` feature). No datasets r
 
 ### Single Spectrum (`ffi_spectrum.rs`)
 
-- get_spectrum index 0 from stub -> returns `OK`, num_peaks is 0
-- get_spectrum out of bounds -> returns `INDEX_OOB`
+- get_spectrum index 0 from stub -> returns `INDEX_OOB` (stub has 0 spectra)
 - get_spectrum with null handle -> returns `INTERNAL`
 - get_spectrum with null out param -> returns `INTERNAL`
-- buffer invalidation — call get_spectrum, save pointers, call again, document that old pointers are invalid
 
 ### Batch Spectrum (`ffi_spectrum.rs`)
 
 - get_spectra_by_rt stub -> returns OK, count=0, null pointer
-- free_spectrum_array with null -> no crash
-- free_spectrum_array with count=0 -> no crash
+- get_spectra_by_rt with null handle -> returns `INTERNAL`
+- get_spectra_by_rt with edge-case params: n_spectra=0 -> returns OK, count=0
+- get_spectra_by_rt with negative n_spectra -> returns OK, count=0 (clamped to 0)
+- free_spectrum_array with null pointer -> no crash
+- free_spectrum_array with non-null pointer and count=0 -> no crash (frees the array, skips per-element cleanup)
 
 ### Single Frame (`ffi_frame.rs`)
 
-- get_frame index 0 from stub -> returns `OK`, num_peaks is 0
-- get_frame out of bounds -> returns `INDEX_OOB`
+- get_frame index 0 from stub -> returns `INDEX_OOB` (stub has 0 frames)
 - get_frame with null handle -> returns `INTERNAL`
 - get_frame with null out param -> returns `INTERNAL`
-- buffer invalidation — mirror of spectrum test
 
 ### Batch Frame (`ffi_frame.rs`)
 
 - get_frames_by_level stub -> returns OK, count=0, null pointer
-- free_frame_array with null -> no crash
-- free_frame_array with count=0 -> no crash
+- get_frames_by_level with null handle -> returns `INTERNAL`
+- free_frame_array with null pointer -> no crash
+- free_frame_array with non-null pointer and count=0 -> no crash
 
 ### Query & Metadata (`ffi_query.rs`)
 
 - num_spectra on stub -> returns 0
+- num_spectra with null handle -> returns 0
 - num_frames on stub -> returns 0
+- num_frames with null handle -> returns 0
 - get_swath_windows stub -> returns OK, count=0
+- get_swath_windows with null handle -> returns `INTERNAL`
 - free_swath_windows null -> no crash
 - file_info stub -> returns OK, all fields zero
+- file_info with null handle -> returns `INTERNAL`
+- file_info with null out param -> returns `INTERNAL`
 
 ### Converters (`ffi_converters.rs`)
 
 - tof_to_mz with null handle -> returns NaN
 - scan_to_im with null handle -> returns NaN
-- tof_to_mz stub -> returns identity value
-- tof_to_mz_array with null params -> returns `INTERNAL`
-- tof_to_mz_array stub -> output matches identity
-- scan_to_im_array — mirror of tof tests
+- tof_to_mz stub -> for input N, returns N (identity)
+- scan_to_im stub -> for input N, returns N (identity)
+- tof_to_mz_array with null handle -> returns `INTERNAL`
+- tof_to_mz_array with null input pointer -> returns `INTERNAL`
+- tof_to_mz_array with null output pointer -> returns `INTERNAL`
+- tof_to_mz_array with count=0 and valid (non-null) pointers -> returns OK without dereferencing pointers (null pointers still return INTERNAL regardless of count)
+- tof_to_mz_array stub -> output[i] matches tof_to_mz(input[i]) for each element
+- scan_to_im_array — mirror of all tof_to_mz_array tests above
 
 ## Rust Test Coverage — Real Data Mode
 
@@ -116,12 +134,14 @@ Tests in `ffi_real_data.rs`. Gated behind env vars; skip gracefully if unset. Re
 
 - open succeeds -> status OK, handle non-null
 - num_spectra > 0
-- num_frames > 0, and num_frames <= num_spectra
+- num_frames > 0, and num_frames <= num_spectra (expected for test dataset; not a universal API invariant)
 - get_spectrum(0) -> OK, num_peaks > 0, mz/intensity non-null, rt > 0, ms_level is 1 or 2
 - spectrum mz values sorted (monotonically non-decreasing)
 - spectrum intensity values non-negative
+- spectrum metadata fields -> index is set, isolation_width/isolation_mz plausible for MS2, charge > 0 for identified MS2 precursors, frame_index != u32::MAX for MS2
 - get_frame(0) -> OK, num_peaks > 0, num_scans > 0, scan_offsets length = num_scans + 1
 - frame scan_offsets monotonic, last offset == num_peaks
+- get_frames_by_level(1) -> count > 0, returned frames all have ms_level == 1
 - get_spectra_by_rt -> pick RT from middle, request n_spec=3, verify count > 0, returned RT near requested
 - converters produce positive finite values
 - converter array matches scalar (call array variant, compare to loop of scalar calls)
@@ -145,7 +165,7 @@ Tests in `ffi_real_data.rs`. Gated behind env vars; skip gracefully if unset. Re
 
 ### ABI Layout (`test_abi.cpp`)
 
-- `sizeof` checks via `static_assert` for all C-repr structs
+- `sizeof` checks via `static_assert` for all C-repr structs. Expected sizes derived from Rust `std::mem::size_of` (printed by a helper Rust test or build script) to avoid hardcoding platform-dependent values.
 - `offsetof` checks for key fields (mz/intensity pointers, tof_indices, scan_offsets)
 - Enum value checks (TIMSFFI_OK == 0, TIMSFFI_ERR_INDEX_OOB == 3, etc.)
 - Header compiles with `-Wall -Werror`

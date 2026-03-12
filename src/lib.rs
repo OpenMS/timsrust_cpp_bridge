@@ -215,20 +215,20 @@ pub extern "C" fn tims_get_spectra_by_rt(
     out_count: *mut c_uint,
     out_specs: *mut *mut TimsFfiSpectrum,
 ) -> TimsFfiStatus {
+    if handle.is_null() || out_count.is_null() || out_specs.is_null() {
+        return TimsFfiStatus::Internal;
+    }
+
     // This API is only available when built with the real timsrust feature.
     #[cfg(not(feature = "with_timsrust"))]
     {
         // Feature not enabled: return empty result
-        if out_count.is_null() || out_specs.is_null() { return TimsFfiStatus::Internal; }
         unsafe { *out_count = 0; *out_specs = std::ptr::null_mut(); }
         return TimsFfiStatus::Ok;
     }
 
     #[cfg(feature = "with_timsrust")]
     {
-        if handle.is_null() || out_count.is_null() || out_specs.is_null() {
-            return TimsFfiStatus::Internal;
-        }
         let ds = unsafe { &mut (*handle).inner };
 
         // Fast RT lookup using the sorted RT index built at open time.
@@ -418,11 +418,11 @@ pub extern "C" fn tims_file_info(
             }
         }
 
-        info.ms1.finalize();
-        info.ms2.finalize();
         info.wall_ms = t0.elapsed().as_secs_f64() * 1000.0;
     }
 
+    info.ms1.finalize();
+    info.ms2.finalize();
     unsafe { *out = info; }
     TimsFfiStatus::Ok
 }
